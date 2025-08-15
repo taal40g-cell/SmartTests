@@ -487,23 +487,37 @@ def toggle_mark_for_review(q_index):
 
 def load_questions(class_name, subject_name):
     """Load questions for the given class and subject."""
+    if not class_name:
+        st.error("❌ No class selected. Please choose a class first.")
+        return None
+
+    if not subject_name:
+        st.error("❌ No subject selected. Please choose a subject first.")
+        return None
+
     safe_class = class_name.lower().replace(" ", "")
     safe_subject = subject_name.lower().replace(" ", "")
+
     filename = f"questions_{safe_class}_{safe_subject}.json"
     filepath = os.path.join("questions", filename)
+
+    # Debug logging
+    st.info(f"📂 Looking for file: `{filepath}`")
+
     if os.path.exists(filepath):
+        st.success(f"✅ Found: {filepath}")
         with open(filepath, "r", encoding="utf-8") as f:
             return json.load(f)
+    else:
+        st.error(f"❌ File not found: {filepath}")
+        # Show what files actually exist
+        if os.path.exists("questions"):
+            available_files = os.listdir("questions")
+            st.warning(f"📂 Available files in `questions/`: {available_files}")
+        else:
+            st.error("🚫 The `questions/` folder does not exist on the server!")
+
     return []
-
-def view_student_performance(student):
-    """Show the performance history of a student."""
-    try:
-        df = pd.read_csv("performance.csv")
-    except FileNotFoundError:
-        st.warning("No performance data found.")
-        return
-
     student_data = df[df['access_code'] == student['access_code']]
 
     if student_data.empty:

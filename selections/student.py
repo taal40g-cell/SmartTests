@@ -132,28 +132,27 @@ def run_student_mode():
         subject = st.selectbox("Subject", subject_list, key="subject_select", label_visibility="collapsed")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ?? Start Test
+    # 🚀 Start Test
     if st.button("Start Test") and not st.session_state.test_started:
+        if not subject:
+            st.error("❌ Please select a subject before starting the test.")
+            return
+
+        # Debug logging
+        st.info(f"📝 Starting test for Class: `{class_name}`, Subject: `{subject}`")
+
         questions = load_questions(class_name, subject)
         if not questions:
-            st.warning("No questions found for this subject.")
+            st.warning("⚠️ No questions found for this subject.")
             return
+
         st.session_state.questions = questions
         st.session_state.answers = [""] * len(questions)
         st.session_state.current_q = 0
         st.session_state.test_started = True
         st.session_state.submitted = False
         st.session_state.test_end_time = datetime.now() + timedelta(minutes=30)
-        st.session_state.subject = subject  # ? Add this line
-        if not questions:
-            st.warning("No questions found for this subject.")
-            return
-        st.session_state.questions = questions
-        st.session_state.answers = [""] * len(questions)
-        st.session_state.current_q = 0
-        st.session_state.test_started = True
-        st.session_state.submitted = False
-        st.session_state.test_end_time = datetime.now() + timedelta(minutes=30)
+        st.session_state.subject = subject
 
     # ?? Test in Progress
     if st.session_state.test_started and not st.session_state.submitted:
