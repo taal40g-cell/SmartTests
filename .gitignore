@@ -1,0 +1,25 @@
+# Python cache and bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+*.env
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs, temporary files
+*.log
+*.txt
+
+# Virtual environment
+venv/
+
+# Result PDFs
+result_pdfs/
+results/
+
+# QR images (optional)
+qr_*.png
