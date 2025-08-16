@@ -109,15 +109,28 @@ def run_student_mode():
                 st.error("Invalid Access Code for performance lookup.")
 
     student = st.session_state.student
-    class_name = student['class']
-    st.info(f"{student['name']} | ?? Class: {class_name.upper()}")
 
-    # ?? Subject Selection
-    subject_list = {
+    # Normalize class name
+    raw_class = student['class'].strip().lower().replace(" ", "")  # remove spaces & lowercase
+    class_map = {
+        "jhs1": "jhs 1",
+        "jhs2": "jhs 2",
+        "jhs3": "jhs 3"
+    }
+    class_name = class_map.get(raw_class, raw_class)
+
+    st.info(f"{student['name']} | 🎓 Class: {class_name.upper()}")
+
+    # Subject Selection
+    subjects_by_class = {
         "jhs 1": ["English", "Math", "Science"],
         "jhs 2": ["English", "Math", "Science"],
         "jhs 3": ["English", "Math", "Science"],
-    }.get(class_name.lower(), [])
+    }
+
+    subject_list = subjects_by_class.get(class_name, [])
+
+    # Render selectbox with a placeholder if list is empty
     with st.container():
         st.markdown("""
             <style>
@@ -129,9 +142,18 @@ def run_student_mode():
         """, unsafe_allow_html=True)
 
         st.markdown('<div class="small-input">', unsafe_allow_html=True)
+        if subject_list:
+            subject = st.selectbox("Subject", subject_list, key="subject_select", label_visibility="collapsed")
+        else:
+            st.selectbox("Subject", ["No subjects available"], key="subject_select", disabled=True,
+                         label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="small-input">', unsafe_allow_html=True)
         subject = st.selectbox("Subject", subject_list, key="subject_select", label_visibility="collapsed")
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # 🚀 Start Test
     # 🚀 Start Test
     if st.button("Start Test") and not st.session_state.test_started:
         if not subject:
