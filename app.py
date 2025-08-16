@@ -18,6 +18,7 @@ if "menu_selection" not in st.session_state:
 if "trigger_refresh" not in st.session_state:
     st.session_state.trigger_refresh = False
 
+
 # --- Results page ---
 def results_page():
     query_params = st.query_params
