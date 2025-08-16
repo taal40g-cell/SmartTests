@@ -143,15 +143,10 @@ def run_student_mode():
 
         st.markdown('<div class="small-input">', unsafe_allow_html=True)
         if subject_list:
-            subject = st.selectbox("Subject", subject_list, key="subject_select", label_visibility="collapsed")
+            subject = st.selectbox("Subject", subject_list, key="subject_select_main", label_visibility="collapsed")
         else:
-            st.selectbox("Subject", ["No subjects available"], key="subject_select", disabled=True,
+            st.selectbox("Subject", ["No subjects available"], key="subject_select_empty", disabled=True,
                          label_visibility="collapsed")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="small-input">', unsafe_allow_html=True)
-        subject = st.selectbox("Subject", subject_list, key="subject_select", label_visibility="collapsed")
-        st.markdown('</div>', unsafe_allow_html=True)
 
     # 🚀 Start Test
     # 🚀 Start Test
