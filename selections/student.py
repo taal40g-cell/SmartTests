@@ -7,6 +7,7 @@ import pandas as pd
 from fpdf import FPDF
 import io
 import qrcode
+import random
 
 def run_student_mode():
     users_dict = load_users_dict()
@@ -26,7 +27,7 @@ def run_student_mode():
     for key, val in defaults.items():
         st.session_state.setdefault(key, val)
 
-    st.markdown("###  SmartTest Student Portal")
+    st.markdown("<h3 style='text-decoration: underline;'>Student Portal</h3>", unsafe_allow_html=True)
     st.markdown("Welcome to your personalized test center.")
 
     # ?? Inject consistent styling
@@ -46,7 +47,7 @@ def run_student_mode():
         # Tight and styled label just above input
         st.markdown("""
             <div style='margin-bottom: 2px; font-size: 16px; font-weight: 600;'>
-                 Enter Access Code
+                 Enter logins:
                 <span title='Access code given by Admin' style='cursor: help;'></span>
             </div>
         """, unsafe_allow_html=True)
@@ -109,7 +110,6 @@ def run_student_mode():
                 st.error("Invalid Access Code for performance lookup.")
 
     student = st.session_state.student
-
     # Normalize class name
     raw_class = student['class'].strip().lower().replace(" ", "")  # remove spaces & lowercase
     class_map = {
@@ -123,14 +123,17 @@ def run_student_mode():
 
     # Subject Selection
     subjects_by_class = {
-        "jhs 1": ["English", "Math", "Science"],
-        "jhs 2": ["English", "Math", "Science"],
-        "jhs 3": ["English", "Math", "Science"],
+        "jhs 1": ["English", "Math", "Science", "History", "Geography", "Physics", "Chemistry", "Biology", "ICT",
+                  "Economics"],
+        "jhs 2": ["English", "Math", "Science", "History", "Geography", "Physics", "Chemistry", "Biology", "ICT",
+                  "Economics"],
+        "jhs 3": ["English", "Math", "Science", "History", "Geography", "Physics", "Chemistry", "Biology", "ICT",
+                  "Economics"],
     }
 
     subject_list = subjects_by_class.get(class_name, [])
 
-    # Render selectbox with a placeholder if list is empty
+    # Render selectable with a placeholder if list is empty
     with st.container():
         st.markdown("""
             <style>
@@ -140,50 +143,123 @@ def run_student_mode():
             }
             </style>
         """, unsafe_allow_html=True)
-
         st.markdown('<div class="small-input">', unsafe_allow_html=True)
+
+        # ----------------------------
+        # SUBJECT SELECTION & START TEST
+        # ----------------------------
+
+        # Initialize selected_subject in session_state if not exists
+        if "selected_subject" not in st.session_state:
+            st.session_state.selected_subject = None
+
+        # Subject list for the student's class
+        subjects_by_class = {
+            "jhs 1": ["English", "Math", "Science", "History", "Geography", "Physics",
+                      "Chemistry", "Biology", "ICT", "Economics"],
+            "jhs 2": ["English", "Math", "Science", "History", "Geography", "Physics",
+                      "Chemistry", "Biology", "ICT", "Economics"],
+            "jhs 3": ["English", "Math", "Science", "History", "Geography", "Physics",
+                      "Chemistry", "Biology", "ICT", "Economics"],
+        }
+
+        subject_list = subjects_by_class.get(class_name, [])
+
+        # Styling
+        st.markdown("""
+            <style>
+            div[data-baseweb="select"] {
+                width: 220px !important;
+                margin-left: 0 !important;
+            }
+            .small-input input, .small-input select {
+                width: 150px !important;
+                padding: 6px;
+                font-size: 14px;
+                text-align: left;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+        # Initialize selected_subject if it doesn't exist
+        if "selected_subject" not in st.session_state:
+            st.session_state.selected_subject = None
+
+        # Render the subject selectbox
         if subject_list:
-            subject = st.selectbox("Subject", subject_list, key="subject_select_main", label_visibility="collapsed")
+            st.selectbox(
+                "Select Subject",
+                subject_list,
+                index=0 if st.session_state.selected_subject is None else subject_list.index(
+                    st.session_state.selected_subject),
+                key="selected_subject",
+                label_visibility="visible"
+            )
         else:
-            st.selectbox("Subject", ["No subjects available"], key="subject_select_empty", disabled=True,
-                         label_visibility="collapsed")
+            st.selectbox(
+                "Subject",
+                ["No subjects available"],
+                key="subject_select_empty",
+                disabled=True
+            )
 
-    # 🚀 Start Test
-    # 🚀 Start Test
-    if st.button("Start Test") and not st.session_state.test_started:
-        if not subject:
-            st.error("❌ Please select a subject before starting the test.")
-            return
+        # Start Test button
+        if st.button("Start Test"):
+            selected_subject = st.session_state.selected_subject
+            if not selected_subject:
+                st.error("❌ Please select a subject before starting the test.")
+            else:
+                st.session_state.start_info = f"📝 Starting test for Class: `{class_name}`, Subject: `{selected_subject}`"
 
-        # Debug logging
-        st.info(f"📝 Starting test for Class: `{class_name}`, Subject: `{subject}`")
+                # Reset previous test session but NOT selected_subject
+                st.session_state.questions = []
+                st.session_state.answers = []
+                st.session_state.current_q = 0
+                st.session_state.test_started = False
+                st.session_state.submitted = False
+                st.session_state.test_end_time = None
 
-        questions = load_questions(class_name, subject)
-        if not questions:
-            st.warning("⚠️ No questions found for this subject.")
-            return
+                # Load questions
+                questions = load_questions(class_name, selected_subject)
+                if questions:
+                    base_questions = questions[:5]
+                    randomized_questions = []
+                    while len(randomized_questions) < 20:
+                        randomized_questions.append(random.choice(base_questions))
+                    random.shuffle(randomized_questions)
 
-        st.session_state.questions = questions
-        st.session_state.answers = [""] * len(questions)
-        st.session_state.current_q = 0
-        st.session_state.test_started = True
-        st.session_state.submitted = False
-        st.session_state.test_end_time = datetime.now() + timedelta(minutes=30)
-        st.session_state.subject = subject
+                    st.session_state.questions = randomized_questions
+                    st.session_state.answers = [""] * len(randomized_questions)
+                    st.session_state.current_q = 0
+                    st.session_state.test_started = True
+                    st.session_state.submitted = False
+                    st.session_state.test_end_time = datetime.now() + timedelta(minutes=30)
+                    st.session_state.subject = selected_subject
+                    st.rerun()
+
+    # Show the start message after rerun
+    if "start_info" in st.session_state:
+        st.info(st.session_state.start_info)
+        del st.session_state.start_info
 
     # ?? Test in Progress
     if st.session_state.test_started and not st.session_state.submitted:
         now = datetime.now()
-        if now > st.session_state.test_end_time:
+        if st.session_state.test_end_time is not None and now > st.session_state.test_end_time:
             st.warning("Time is up! Submitting automatically.")
             st.session_state.submitted = True
+
         else:
             questions = st.session_state.questions
             show_question_tracker()
             q_index = st.session_state.current_q
             q = questions[q_index]
 
-            st.markdown(f"**Q{q_index + 1}. {q['question']}**")
+            st.markdown(
+                f"<h3 style='font-size:24px; font-weight:600;'>Q{q_index + 1}. {q['question']}</h3>",
+                unsafe_allow_html=True
+            )
+
             options = [""] + q["options"]  # Add empty option as first
             selected = st.session_state.answers[q_index]
 

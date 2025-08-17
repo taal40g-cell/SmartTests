@@ -1,222 +1,202 @@
 [
     {
-        "question": "What planet is known as the Red Planet?",
-        "options": [
-            "Earth",
-            "Mars",
-            "Jupiter",
-            "Venus"
-        ],
-        "answer": "Mars",
-        "subject": "Science"
-    },
-    {
-        "question": "Water freezes at what temperature (\u00b0C)?",
-        "options": [
-            "0",
-            "32",
-            "100",
-            "50"
-        ],
-        "answer": "0",
-        "subject": "Science"
-    },
-    {
-        "question": "Which gas do plants absorb from the atmosphere?",
+        "question": "Which gas do we breathe in?",
         "options": [
             "Oxygen",
-            "Nitrogen",
             "Carbon Dioxide",
+            "Nitrogen",
             "Hydrogen"
         ],
-        "answer": "Carbon Dioxide",
-        "subject": "Science"
+        "answer": "Oxygen"
     },
     {
-        "question": "Which organ pumps blood around the body?",
-        "options": [
-            "Lungs",
-            "Heart",
-            "Brain",
-            "Kidney"
-        ],
-        "answer": "Heart",
-        "subject": "Science"
-    },
-    {
-        "question": "What is H2O commonly known as?",
+        "question": "Which gas do we breathe in?",
         "options": [
             "Oxygen",
-            "Hydrogen",
-            "Water",
-            "Salt"
+            "Carbon Dioxide",
+            "Nitrogen",
+            "Hydrogen"
         ],
-        "answer": "Water",
-        "subject": "Science"
+        "answer": "Oxygen"
     },
     {
-        "question": "Which part of the plant makes food?",
+        "question": "Which part of the plant absorbs water?",
         "options": [
-            "Roots",
             "Stem",
-            "Leaves",
-            "Flowers"
+            "Leaf",
+            "Root",
+            "Flower"
         ],
-        "answer": "Leaves",
-        "subject": "Science"
+        "answer": "Root"
     },
     {
-        "question": "The process of plants making their own food is called?",
+        "question": "Which part of the plant absorbs water?",
         "options": [
+            "Stem",
+            "Leaf",
+            "Root",
+            "Flower"
+        ],
+        "answer": "Root"
+    },
+    {
+        "question": "Plants make food by?",
+        "options": [
+            "Digestion",
             "Photosynthesis",
             "Respiration",
-            "Digestion",
             "Transpiration"
         ],
-        "answer": "Photosynthesis",
-        "subject": "Science"
+        "answer": "Photosynthesis"
     },
     {
-        "question": "Which gas do humans exhale?",
+        "question": "The sun is a?",
+        "options": [
+            "Planet",
+            "Star",
+            "Moon",
+            "Asteroid"
+        ],
+        "answer": "Star"
+    },
+    {
+        "question": "Which gas do we breathe in?",
         "options": [
             "Oxygen",
             "Carbon Dioxide",
             "Nitrogen",
             "Hydrogen"
         ],
-        "answer": "Carbon Dioxide",
-        "subject": "Science"
+        "answer": "Oxygen"
     },
     {
-        "question": "The center of an atom is called?",
+        "question": "Which gas do we breathe in?",
         "options": [
-            "Electron",
-            "Proton",
-            "Nucleus",
-            "Neutron"
+            "Oxygen",
+            "Carbon Dioxide",
+            "Nitrogen",
+            "Hydrogen"
         ],
-        "answer": "Nucleus",
-        "subject": "Science"
+        "answer": "Oxygen"
     },
     {
-        "question": "Which organ helps us breathe?",
+        "question": "Plants make food by?",
         "options": [
-            "Lungs",
-            "Heart",
-            "Stomach",
-            "Brain"
+            "Digestion",
+            "Photosynthesis",
+            "Respiration",
+            "Transpiration"
         ],
-        "answer": "Lungs",
-        "subject": "Science"
+        "answer": "Photosynthesis"
     },
     {
-        "question": "Which of these is a mammal?",
+        "question": "Which part of the plant absorbs water?",
         "options": [
-            "Shark",
-            "Dolphin",
-            "Crocodile",
-            "Frog"
+            "Stem",
+            "Leaf",
+            "Root",
+            "Flower"
         ],
-        "answer": "Dolphin",
-        "subject": "Science"
+        "answer": "Root"
     },
     {
-        "question": "The force that pulls objects toward Earth is called?",
+        "question": "Plants make food by?",
         "options": [
-            "Friction",
-            "Magnetism",
-            "Gravity",
-            "Electricity"
+            "Digestion",
+            "Photosynthesis",
+            "Respiration",
+            "Transpiration"
         ],
-        "answer": "Gravity",
-        "subject": "Science"
+        "answer": "Photosynthesis"
     },
     {
-        "question": "What is the main source of energy for Earth?",
+        "question": "The sun is a?",
         "options": [
+            "Planet",
+            "Star",
             "Moon",
-            "Sun",
-            "Stars",
-            "Wind"
+            "Asteroid"
         ],
-        "answer": "Sun",
-        "subject": "Science"
+        "answer": "Star"
     },
     {
-        "question": "Which is a conductor of electricity?",
+        "question": "Water freezes at what temperature?",
         "options": [
-            "Wood",
-            "Plastic",
-            "Copper",
-            "Rubber"
+            "0\u00b0C",
+            "100\u00b0C",
+            "50\u00b0C",
+            "10\u00b0C"
         ],
-        "answer": "Copper",
-        "subject": "Science"
+        "answer": "0\u00b0C"
     },
     {
-        "question": "What is the boiling point of water (\u00b0C)?",
+        "question": "The sun is a?",
         "options": [
-            "0",
-            "50",
-            "100",
-            "150"
+            "Planet",
+            "Star",
+            "Moon",
+            "Asteroid"
         ],
-        "answer": "100",
-        "subject": "Science"
+        "answer": "Star"
     },
     {
-        "question": "Which part of the body controls thinking?",
+        "question": "Which part of the plant absorbs water?",
         "options": [
-            "Heart",
-            "Lungs",
-            "Brain",
-            "Kidneys"
+            "Stem",
+            "Leaf",
+            "Root",
+            "Flower"
         ],
-        "answer": "Brain",
-        "subject": "Science"
+        "answer": "Root"
     },
     {
-        "question": "Which planet is closest to the Sun?",
+        "question": "Which part of the plant absorbs water?",
         "options": [
-            "Venus",
-            "Mercury",
-            "Earth",
-            "Mars"
+            "Stem",
+            "Leaf",
+            "Root",
+            "Flower"
         ],
-        "answer": "Mercury",
-        "subject": "Science"
+        "answer": "Root"
     },
     {
-        "question": "Which simple machine is a seesaw?",
+        "question": "The sun is a?",
         "options": [
-            "Lever",
-            "Pulley",
-            "Inclined Plane",
-            "Wheel"
+            "Planet",
+            "Star",
+            "Moon",
+            "Asteroid"
         ],
-        "answer": "Lever",
-        "subject": "Science"
+        "answer": "Star"
     },
     {
-        "question": "Which blood cells help fight disease?",
+        "question": "Plants make food by?",
         "options": [
-            "Red",
-            "White",
-            "Platelets",
-            "Plasma"
+            "Digestion",
+            "Photosynthesis",
+            "Respiration",
+            "Transpiration"
         ],
-        "answer": "White",
-        "subject": "Science"
+        "answer": "Photosynthesis"
     },
     {
-        "question": "What is the center of the Earth called?",
+        "question": "The sun is a?",
         "options": [
-            "Core",
-            "Mantle",
-            "Crust",
-            "Plate"
+            "Planet",
+            "Star",
+            "Moon",
+            "Asteroid"
         ],
-        "answer": "Core",
-        "subject": "Science"
+        "answer": "Star"
+    },
+    {
+        "question": "Which part of the plant absorbs water?",
+        "options": [
+            "Stem",
+            "Leaf",
+            "Root",
+            "Flower"
+        ],
+        "answer": "Root"
     }
 ]

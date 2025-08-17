@@ -1,6 +1,5 @@
-import json
+import random
 from datetime import datetime
-import streamlit as st
 import csv
 import bcrypt
 import pandas as pd
@@ -9,6 +8,8 @@ import qrcode
 from io import BytesIO
 import io
 import zipfile
+import os
+import json
 from fpdf import FPDF
 
 
@@ -131,6 +132,8 @@ def delete_question_file(class_name, subject_name):
 
 # ----------------------------- Score & Result -----------------------------
 
+# ----------------------------- Score & Result -----------------------------
+
 def calculate_score(questions, answers):
     score = 0
     detailed = []
@@ -149,13 +152,13 @@ def calculate_score(questions, answers):
         })
     return score, detailed
 
-
 def save_student_result(access_code, result_entry, folder="results"):
+    """
+    Saves a student's test result to a JSON file.
+    """
     os.makedirs(folder, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{access_code}_{timestamp}.json"
-    file_path = os.path.join(folder, filename)
-    with open(file_path, "w") as f:
+    file_path = os.path.join(folder, f"{access_code}.json")
+    with open(file_path, "w", encoding="utf-8") as f:
         json.dump(result_entry, f, indent=4)
 
 def load_results_detail(access_code, folder="results"):
@@ -164,8 +167,6 @@ def load_results_detail(access_code, folder="results"):
         return {}
     with open(file_path, "r") as f:
         return json.load(f)
-from fpdf import FPDF
-import os
 
 def save_result_pdf(access_code, result_entry, folder="result_pdfs"):
     print(f"Saving PDF for {access_code}")
@@ -222,17 +223,6 @@ def load_leaderboard(file_path="leaderboard.json"):
 def save_leaderboard(data, file_path="leaderboard.json"):
     with open(file_path, "w") as f:
         json.dump(data, f, indent=4)
-
-def save_student_result(access_code, result_entry):
-    results = {}
-    if os.path.exists("results.json"):
-        with open("results.json", "r") as file:
-            results = json.load(file)
-
-    results[access_code] = result_entry
-
-    with open("results.json", "w") as file:
-        json.dump(results, file, indent=4)
 
 def generate_access_slips(users, folder="access_slips"):
     # Ensure folder exists
@@ -484,50 +474,40 @@ def toggle_mark_for_review(q_index):
 
     st.session_state.marked_for_review = marked
 
-
-import os
-import json
-import streamlit as st
-
 subject_map = {
     "English": "english",
     "Math": "mathematics",
-    "Science": "science"
-}
-
-
-subject_map = {
-    "English": "english",
-    "Math": "mathematics",
-    "Science": "science"
+    "Science": "science",
+    "History": "history",
+    "Geography": "geography",
+    "Physics": "physics",
+    "Chemistry": "chemistry",
+    "Biology": "biology",
+    "ICT": "ict",
+    "Economics": "economics"
 }
 
 def load_questions(class_name, subject_name):
-    """Load questions for the given class and subject."""
-    safe_class = class_name.lower().replace(" ", "")
-
+    """Load and shuffle questions for the given class and subject."""
     if not subject_name:
         st.error("❌ No subject selected. Please choose a subject first.")
-        return None
+        return []
 
-    # Use the mapped filename-friendly subject
+    safe_class = class_name.lower().replace(" ", "")
     safe_subject = subject_map.get(subject_name, subject_name.lower().replace(" ", ""))
-
     filename = f"questions_{safe_class}_{safe_subject}.json"
     filepath = os.path.join("questions", filename)
 
     if os.path.exists(filepath):
         with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
+            questions = json.load(f)
 
-    return []
-
-    student_data = df[df['access_code'] == student['access_code']]
-
-    if student_data.empty:
-        st.info("No performance records found for this student.")
+        random.shuffle(questions)  # Shuffle the questions for each test
+        return questions
     else:
-        st.dataframe(student_data)
+        st.warning(f"⚠️ No questions found for {subject_name} in {class_name}.")
+        return []
+
 
 def generate_qr_code(data):
     """
@@ -552,13 +532,14 @@ def load_results(access_code):
             return json.load(f)
     return None
 
-def results_page():
+def results_page(df=None):
     access_code = st.query_params.get("access_code", [None])[0]
 
     if not access_code:
         st.error("No access code provided in URL.")
         return
 
+    # Load individual result JSON
     results = load_results(access_code)
     if not results:
         st.error("No results found for this access code.")
@@ -578,6 +559,15 @@ def results_page():
         st.write(f"- Result: {'✅ Correct' if detail['is_correct'] else '❌ Incorrect'}")
         st.write("---")
 
+    # Optional: Show all attempts as a DataFrame if df is provided
+    if df is not None:
+        student_data = df[df['access_code'] == access_code]
+
+        st.markdown("### All Attempts")
+        if student_data.empty:
+            st.info("No performance records found for this student.")
+        else:
+            st.dataframe(student_data)
 
 def load_users_dict():
     import csv

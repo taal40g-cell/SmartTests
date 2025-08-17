@@ -1,69 +1,133 @@
 [
     {
-        "question": "What is 5 + 3?",
+        "question": "What is 5 + 7?",
         "options": [
-            "6",
-            "7",
-            "8",
-            "9"
+            "10",
+            "11",
+            "12",
+            "13"
         ],
-        "answer": "8",
-        "subject": "Mathematics"
+        "answer": "12"
     },
     {
-        "question": "What is 12 - 4?",
-        "options": [
-            "6",
-            "7",
-            "8",
-            "9"
-        ],
-        "answer": "8",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 6 \u00d7 7?",
-        "options": [
-            "42",
-            "36",
-            "48",
-            "49"
-        ],
-        "answer": "42",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 49 \u00f7 7?",
-        "options": [
-            "6",
-            "7",
-            "8",
-            "9"
-        ],
-        "answer": "7",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is the value of 2\u00b2?",
+        "question": "Find the value of 2\u00b2",
         "options": [
             "2",
             "4",
             "6",
             "8"
         ],
-        "answer": "4",
-        "subject": "Mathematics"
+        "answer": "4"
     },
     {
-        "question": "What is the value of 3\u00b3?",
+        "question": "What is 7 - 4?",
         "options": [
-            "6",
-            "9",
-            "27",
-            "81"
+            "1",
+            "2",
+            "3",
+            "4"
         ],
-        "answer": "27",
-        "subject": "Mathematics"
+        "answer": "3"
+    },
+    {
+        "question": "What is 5 + 7?",
+        "options": [
+            "10",
+            "11",
+            "12",
+            "13"
+        ],
+        "answer": "12"
+    },
+    {
+        "question": "What is 7 - 4?",
+        "options": [
+            "1",
+            "2",
+            "3",
+            "4"
+        ],
+        "answer": "3"
+    },
+    {
+        "question": "What is 5 + 7?",
+        "options": [
+            "10",
+            "11",
+            "12",
+            "13"
+        ],
+        "answer": "12"
+    },
+    {
+        "question": "Find the value of 2\u00b2",
+        "options": [
+            "2",
+            "4",
+            "6",
+            "8"
+        ],
+        "answer": "4"
+    },
+    {
+        "question": "Find the value of 2\u00b2",
+        "options": [
+            "2",
+            "4",
+            "6",
+            "8"
+        ],
+        "answer": "4"
+    },
+    {
+        "question": "What is 9 x 3?",
+        "options": [
+            "27",
+            "26",
+            "30",
+            "29"
+        ],
+        "answer": "27"
+    },
+    {
+        "question": "What is 9 x 3?",
+        "options": [
+            "27",
+            "26",
+            "30",
+            "29"
+        ],
+        "answer": "27"
+    },
+    {
+        "question": "Find the value of 2\u00b2",
+        "options": [
+            "2",
+            "4",
+            "6",
+            "8"
+        ],
+        "answer": "4"
+    },
+    {
+        "question": "What is 5 + 7?",
+        "options": [
+            "10",
+            "11",
+            "12",
+            "13"
+        ],
+        "answer": "12"
+    },
+    {
+        "question": "What is 7 - 4?",
+        "options": [
+            "1",
+            "2",
+            "3",
+            "4"
+        ],
+        "answer": "3"
     },
     {
         "question": "Simplify: 15 \u00f7 3",
@@ -73,150 +137,66 @@
             "5",
             "6"
         ],
-        "answer": "5",
-        "subject": "Mathematics"
+        "answer": "5"
     },
     {
-        "question": "What is 7 + 6?",
+        "question": "What is 9 x 3?",
         "options": [
-            "12",
-            "13",
-            "14",
-            "15"
+            "27",
+            "26",
+            "30",
+            "29"
         ],
-        "answer": "13",
-        "subject": "Mathematics"
+        "answer": "27"
     },
     {
-        "question": "What is 20 - 9?",
+        "question": "Simplify: 15 \u00f7 3",
         "options": [
-            "9",
-            "10",
-            "11",
-            "12"
-        ],
-        "answer": "11",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 8 \u00d7 5?",
-        "options": [
-            "35",
-            "40",
-            "45",
-            "50"
-        ],
-        "answer": "40",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 36 \u00f7 6?",
-        "options": [
+            "3",
+            "4",
             "5",
+            "6"
+        ],
+        "answer": "5"
+    },
+    {
+        "question": "Find the value of 2\u00b2",
+        "options": [
+            "2",
+            "4",
             "6",
-            "7",
             "8"
         ],
-        "answer": "6",
-        "subject": "Mathematics"
+        "answer": "4"
     },
     {
-        "question": "Simplify: 9 + 8 - 5",
+        "question": "What is 5 + 7?",
         "options": [
-            "10",
-            "12",
-            "13",
-            "14"
-        ],
-        "answer": "12",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 10 \u00d7 10?",
-        "options": [
-            "100",
-            "90",
-            "110",
-            "120"
-        ],
-        "answer": "100",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 50 \u00f7 5?",
-        "options": [
-            "9",
             "10",
             "11",
-            "12"
+            "12",
+            "13"
         ],
-        "answer": "10",
-        "subject": "Mathematics"
+        "answer": "12"
     },
     {
-        "question": "Simplify: 7 \u00d7 3 + 2",
-        "options": [
-            "21",
-            "23",
-            "24",
-            "25"
-        ],
-        "answer": "23",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 2 \u00d7 (3 + 4)?",
+        "question": "What is 5 + 7?",
         "options": [
             "10",
+            "11",
             "12",
-            "14",
-            "16"
+            "13"
         ],
-        "answer": "14",
-        "subject": "Mathematics"
+        "answer": "12"
     },
     {
-        "question": "Simplify: 18 \u00f7 2 + 5",
+        "question": "What is 7 - 4?",
         "options": [
-            "10",
-            "12",
-            "14",
-            "16"
+            "1",
+            "2",
+            "3",
+            "4"
         ],
-        "answer": "14",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 11 + 12?",
-        "options": [
-            "21",
-            "22",
-            "23",
-            "24"
-        ],
-        "answer": "23",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "What is 15 - 7?",
-        "options": [
-            "6",
-            "7",
-            "8",
-            "9"
-        ],
-        "answer": "8",
-        "subject": "Mathematics"
-    },
-    {
-        "question": "Simplify: 4 \u00d7 5 - 6",
-        "options": [
-            "12",
-            "14",
-            "16",
-            "18"
-        ],
-        "answer": "14",
-        "subject": "Mathematics"
+        "answer": "3"
     }
 ]

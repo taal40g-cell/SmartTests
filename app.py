@@ -33,7 +33,7 @@ def results_page():
 # --- Main app ---
 def main():
     # Always reset background to latest version
-    set_background("assets/fll.jpg")
+    set_background("assets/1.png")
 
     # Handle results page query param
     page = st.query_params.get("page", [None])[0]
@@ -44,7 +44,7 @@ def main():
     # App header
     st.markdown(
         "<h1 style='text-align: center; text-decoration: underline; "
-        "font-weight: bold; color: white; background-color: #ff69b4'>🎓 SmarTest</h1>",
+        "font-weight: bold; color: white; background-color: '></h1>",
         unsafe_allow_html=True
     )
 
