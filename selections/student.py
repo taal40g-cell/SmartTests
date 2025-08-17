@@ -54,7 +54,7 @@ def run_student_mode():
 
         access_code = st.text_input(
             label="Access Code",
-            placeholder="e.g., 1234",
+            placeholder="e.g: code given by Admin",
             key="access_code_input",
             label_visibility="collapsed"
         )
