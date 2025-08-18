@@ -11,6 +11,9 @@ import zipfile
 import os
 import json
 from fpdf import FPDF
+import streamlit as st
+import base64
+
 
 
 def require_admin_login():
@@ -92,6 +95,47 @@ def generate_access_code(name):
     base = name.replace(" ", "").lower()
     code = base[:4] + str(datetime.now().microsecond)[-4:]
     return code
+
+def generate_access_slips_with_qr(users, folder="access_slips"):
+    import io
+    import zipfile
+    from fpdf import FPDF
+    import os
+
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+    for user in users:
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=14)
+        pdf.cell(0, 10, "Access Slip", ln=True, align="C")
+        pdf.ln(10)
+
+        pdf.set_font("Arial", size=12)
+        pdf.cell(0, 10, f"Name: {user['name']}", ln=True)
+        pdf.cell(0, 10, f"Class: {user['class']}", ln=True)
+        pdf.cell(0, 10, f"Access Code: {user['access_code']}", ln=True)
+
+        # Generate QR code
+        qr_buf = generate_qr_code(user["access_code"])
+        qr_file = f"{user['access_code']}.png"
+        with open(qr_file, "wb") as f:
+            f.write(qr_buf.read())
+        pdf.image(qr_file, x=10, y=60, w=50, h=50)
+        os.remove(qr_file)
+
+        file_path = os.path.join(folder, f"{user['access_code']}.pdf")
+        pdf.output(file_path)
+
+    # Zip the folder
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for file in os.listdir(folder):
+            zipf.write(os.path.join(folder, file), file)
+    zip_buffer.seek(0)
+    return zip_buffer
+
 
 
 def allow_retake_toggle(access_code, value):
@@ -298,10 +342,10 @@ def add_user_ui():
 USERS_FILE = "users.csv"
 
 def change_admin_password_ui():
-    st.subheader("?? Change Admin Password")
+    st.subheader(" Change Admin Password")
 
     if not os.path.exists(USERS_FILE):
-        st.error("? No users file found.")
+        st.error(" No users file found !.")
         return
 
     users_df = pd.read_csv(USERS_FILE)
@@ -313,24 +357,24 @@ def change_admin_password_ui():
 
     if st.button("Update Password"):
         if new_password != confirm_password:
-            st.warning("?? New passwords do not match.")
+            st.warning("New passwords do not match.")
             return
 
         user_row = users_df[(users_df["username"] == username) & (users_df["role"] == "admin")]
 
         if user_row.empty:
-            st.error("? Admin user not found.")
+            st.error("Admin user not found.")
             return
 
         stored_hash = user_row.iloc[0]["password"].encode('utf-8')
         if not bcrypt.checkpw(old_password.encode('utf-8'), stored_hash):
-            st.error("? Incorrect current password.")
+            st.error("Incorrect current password.")
             return
 
         new_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
         users_df.loc[users_df["username"] == username, "password"] = new_hash.decode('utf-8')
         users_df.to_csv(USERS_FILE, index=False)
-        st.success("? Password updated successfully.")
+        st.success("Password updated successfully.")
 
 
 
@@ -508,19 +552,14 @@ def load_questions(class_name, subject_name):
         st.warning(f"⚠️ No questions found for {subject_name} in {class_name}.")
         return []
 
-
-def generate_qr_code(data):
-    """
-    Generate a QR code image for the given data string.
-    Returns a BytesIO object with PNG image data.
-    """
-    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+def generate_qr_code(data, box_size=8, border=2):
+    """Generate a QR code image as BytesIO buffer."""
+    qr = qrcode.QRCode(version=1, box_size=box_size, border=border)
     qr.add_data(data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
-
-    buf = BytesIO()
-    img.save(buf, format="PNG")
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
     buf.seek(0)
     return buf
 
@@ -594,8 +633,8 @@ def show_header():
 def layout_top_controls(class_name, subject_name, duration):
     col1, col2 = st.columns(2)
     with col1:
-        st.info(f"?? Class: **{class_name}**")
-        st.info(f"?? Subject: **{subject_name}**")
+        st.info(f" Class: **{class_name}**")
+        st.info(f" Subject: **{subject_name}**")
     with col2:
         from datetime import datetime
 
@@ -609,24 +648,40 @@ def layout_top_controls(class_name, subject_name, duration):
                 st.error("? Time's up!")
 
 
-import streamlit as st
-import base64
-
-def set_background(image_file="assets/fl.png"):
-    with open(image_file, "rb") as f:
-        base64_image = base64.b64encode(f.read()).decode()
-
-    background_style = f"""
-        <style>
-            .stApp {{
-                background-image: url("data:image/png;base64,{base64_image}");
-                background-size: cover;
-            }}
-        </style>
-    """
-    st.markdown(background_style, unsafe_allow_html=True)
-
-
 def send_sms(to_number, message):
     """Mock SMS sender - no Twilio call"""
     print(f"📩 [MOCK] SMS to {to_number}: {message}")
+
+# help.py
+import os, qrcode
+from datetime import datetime, timedelta
+
+def cleanup_qr_folder(folder, days_old=30):
+    """Remove QR files older than `days_old` days."""
+    if not os.path.exists(folder):
+        return
+    now = datetime.now()
+    for file in os.listdir(folder):
+        filepath = os.path.join(folder, file)
+        if os.path.isfile(filepath):
+            file_age = now - datetime.fromtimestamp(os.path.getmtime(filepath))
+            if file_age > timedelta(days=days_old):
+                os.remove(filepath)
+
+def generate_qr(data, filename=None, folder="qr_codes"):
+    """Generate a QR code image and return its file path."""
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+    # Cleanup old QR files
+    cleanup_qr_folder(folder, days_old=30)
+
+    # Auto-generate filename if not given
+    if not filename:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"qr_{timestamp}.png"
+
+    filepath = os.path.join(folder, filename)
+    img = qrcode.make(data)
+    img.save(filepath)
+    return filepath

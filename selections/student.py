@@ -1,17 +1,19 @@
 import streamlit as st
 from datetime import datetime, timedelta
 from auth import get_student_by_code
-from helpers import load_questions, calculate_score,load_users_dict
-from helpers import show_question_tracker
+from helpers import load_questions, calculate_score, load_users_dict, show_question_tracker
 import pandas as pd
 from fpdf import FPDF
 import io
 import qrcode
-import random
+from PIL import Image
 
 def run_student_mode():
     users_dict = load_users_dict()
-    # ?? Init session
+
+    # -----------------------------
+    # Initialize session variables
+    # -----------------------------
     defaults = {
         "test_started": False,
         "submitted": False,
@@ -21,16 +23,21 @@ def run_student_mode():
         "current_q": 0,
         "test_end_time": None,
         "questions": [],
-        "subject": None  # ? Add this
+        "subject": None,
+        "marked_for_review": set()
     }
-
     for key, val in defaults.items():
         st.session_state.setdefault(key, val)
 
-    st.markdown("<h3 style='text-decoration: underline;'>Student Portal</h3>", unsafe_allow_html=True)
+    # -----------------------------
+    # Header
+    # -----------------------------
+    st.markdown("###  SmartTest Student Portal")
     st.markdown("Welcome to your personalized test center.")
 
-    # ?? Inject consistent styling
+    # -----------------------------
+    # Global CSS styling
+    # -----------------------------
     st.markdown("""
         <style>
         .small-input input, .small-input select {
@@ -39,34 +46,30 @@ def run_student_mode():
             font-size: 14px;
             text-align: left;
         }
+        div[data-baseweb="input"], div[data-baseweb="select"] {
+            width: 220px !important;
+            margin-left: 0 !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
-    # ?? Login
+    # -----------------------------
+    # Login
+    # -----------------------------
     if not st.session_state.logged_in:
-        # Tight and styled label just above input
         st.markdown("""
             <div style='margin-bottom: 2px; font-size: 16px; font-weight: 600;'>
-                 Enter logins:
+                Enter Access Code
                 <span title='Access code given by Admin' style='cursor: help;'></span>
             </div>
         """, unsafe_allow_html=True)
 
         access_code = st.text_input(
             label="Access Code",
-            placeholder="e.g: code given by Admin",
+            placeholder="e.g., 1234",
             key="access_code_input",
             label_visibility="collapsed"
         )
-        # Shrink and align left
-        st.markdown("""
-            <style>
-            div[data-baseweb="input"] {
-                width: 220px !important;
-                margin-left: 0 !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
 
         if access_code:
             student = get_student_by_code(access_code.strip())
@@ -78,12 +81,13 @@ def run_student_mode():
             else:
                 st.error("Invalid access code.")
         return
+
+    # -----------------------------
+    # Sidebar: Past Performance & QR
+    # -----------------------------
     with st.sidebar:
         st.header("View Past Performance")
-        access_code_perf = st.text_input("Enter Access Code")
-
-
-        from PIL import Image
+        access_code_perf = st.text_input("Enter Access Code for Performance", key="perf_code_input")
 
         def generate_qr_code(data):
             qr = qrcode.QRCode(version=1, box_size=8, border=2)
@@ -95,172 +99,80 @@ def run_student_mode():
             buf.seek(0)
             return buf
 
-        # Inside your sidebar where you have access_code_perf and student_perf:
         if access_code_perf:
             student_perf = users_dict.get(access_code_perf.strip())
             if student_perf:
                 st.success(f"Student: {student_perf['name']} | Class: {student_perf['class']}")
-
-                # Generate QR code URL that directs to results page with params
-                url = f"http://localhost:8501/?page=results&access_code={access_code_perf.strip()}"
-
+                # QR now points to deployed URL
+                url = f"https://smarttests-3.onrender.com/?page=results&access_code={access_code_perf.strip()}"
                 qr_img_buf = generate_qr_code(url)
                 st.image(qr_img_buf, caption="Scan this QR to view performance", use_container_width=False)
             else:
                 st.error("Invalid Access Code for performance lookup.")
 
+    # -----------------------------
+    # Student Info
+    # -----------------------------
     student = st.session_state.student
-    # Normalize class name
-    raw_class = student['class'].strip().lower().replace(" ", "")  # remove spaces & lowercase
-    class_map = {
-        "jhs1": "jhs 1",
-        "jhs2": "jhs 2",
-        "jhs3": "jhs 3"
-    }
-    class_name = class_map.get(raw_class, raw_class)
+    class_name = student['class']
+    st.info(f"{student['name']} | Class: {class_name.upper()}")
 
-    st.info(f"{student['name']} | 🎓 Class: {class_name.upper()}")
-
+    # -----------------------------
     # Subject Selection
-    subjects_by_class = {
-        "jhs 1": ["English", "Math", "Science", "History", "Geography", "Physics", "Chemistry", "Biology", "ICT",
-                  "Economics"],
-        "jhs 2": ["English", "Math", "Science", "History", "Geography", "Physics", "Chemistry", "Biology", "ICT",
-                  "Economics"],
-        "jhs 3": ["English", "Math", "Science", "History", "Geography", "Physics", "Chemistry", "Biology", "ICT",
-                  "Economics"],
+    # -----------------------------
+    subjects_list = {
+        "jhs1": ["English", "Math", "Science", "History", "Geography",
+                 "Physics", "Chemistry", "Biology", "ICT", "Economics"],
+        "jhs2": ["English", "Math", "Science", "History", "Geography",
+                 "Physics", "Chemistry", "Biology", "ICT", "Economics"],
+        "jhs3": ["English", "Math", "Science", "History", "Geography",
+                 "Physics", "Chemistry", "Biology", "ICT", "Economics"],
     }
+    class_key = student['class'].strip().lower().replace(" ", "")
+    subject_options = subjects_list.get(class_key, [])
 
-    subject_list = subjects_by_class.get(class_name, [])
+    if not subject_options:
+        st.warning("No subjects found for your class. Please contact admin.")
+        return
 
-    # Render selectable with a placeholder if list is empty
     with st.container():
-        st.markdown("""
-            <style>
-            div[data-baseweb="select"] {
-                width: 220px !important;
-                margin-left: 0 !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
         st.markdown('<div class="small-input">', unsafe_allow_html=True)
+        subject = st.selectbox("Subject", subject_options, key="subject_select", label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        # ----------------------------
-        # SUBJECT SELECTION & START TEST
-        # ----------------------------
+    # -----------------------------
+    # Start Test Button
+    # -----------------------------
+    if st.button("Start Test") and not st.session_state.test_started:
+        questions = load_questions(student['class'], subject)
+        if not questions:
+            st.warning("No questions found for this subject.")
+            return
 
-        # Initialize selected_subject in session_state if not exists
-        if "selected_subject" not in st.session_state:
-            st.session_state.selected_subject = None
+        st.session_state.questions = questions
+        st.session_state.answers = [""] * len(questions)
+        st.session_state.current_q = 0
+        st.session_state.test_started = True
+        st.session_state.submitted = False
+        st.session_state.test_end_time = datetime.now() + timedelta(minutes=30)
+        st.session_state.subject = subject
 
-        # Subject list for the student's class
-        subjects_by_class = {
-            "jhs 1": ["English", "Math", "Science", "History", "Geography", "Physics",
-                      "Chemistry", "Biology", "ICT", "Economics"],
-            "jhs 2": ["English", "Math", "Science", "History", "Geography", "Physics",
-                      "Chemistry", "Biology", "ICT", "Economics"],
-            "jhs 3": ["English", "Math", "Science", "History", "Geography", "Physics",
-                      "Chemistry", "Biology", "ICT", "Economics"],
-        }
-
-        subject_list = subjects_by_class.get(class_name, [])
-
-        # Styling
-        st.markdown("""
-            <style>
-            div[data-baseweb="select"] {
-                width: 220px !important;
-                margin-left: 0 !important;
-            }
-            .small-input input, .small-input select {
-                width: 150px !important;
-                padding: 6px;
-                font-size: 14px;
-                text-align: left;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-
-        # Initialize selected_subject if it doesn't exist
-        if "selected_subject" not in st.session_state:
-            st.session_state.selected_subject = None
-
-        # Render the subject selectbox
-        if subject_list:
-            st.selectbox(
-                "Select Subject",
-                subject_list,
-                index=0 if st.session_state.selected_subject is None else subject_list.index(
-                    st.session_state.selected_subject),
-                key="selected_subject",
-                label_visibility="visible"
-            )
-        else:
-            st.selectbox(
-                "Subject",
-                ["No subjects available"],
-                key="subject_select_empty",
-                disabled=True
-            )
-
-        # Start Test button
-        if st.button("Start Test"):
-            selected_subject = st.session_state.selected_subject
-            if not selected_subject:
-                st.error("❌ Please select a subject before starting the test.")
-            else:
-                st.session_state.start_info = f"📝 Starting test for Class: `{class_name}`, Subject: `{selected_subject}`"
-
-                # Reset previous test session but NOT selected_subject
-                st.session_state.questions = []
-                st.session_state.answers = []
-                st.session_state.current_q = 0
-                st.session_state.test_started = False
-                st.session_state.submitted = False
-                st.session_state.test_end_time = None
-
-                # Load questions
-                questions = load_questions(class_name, selected_subject)
-                if questions:
-                    base_questions = questions[:5]
-                    randomized_questions = []
-                    while len(randomized_questions) < 20:
-                        randomized_questions.append(random.choice(base_questions))
-                    random.shuffle(randomized_questions)
-
-                    st.session_state.questions = randomized_questions
-                    st.session_state.answers = [""] * len(randomized_questions)
-                    st.session_state.current_q = 0
-                    st.session_state.test_started = True
-                    st.session_state.submitted = False
-                    st.session_state.test_end_time = datetime.now() + timedelta(minutes=30)
-                    st.session_state.subject = selected_subject
-                    st.rerun()
-
-    # Show the start message after rerun
-    if "start_info" in st.session_state:
-        st.info(st.session_state.start_info)
-        del st.session_state.start_info
-
-    # ?? Test in Progress
+    # -----------------------------
+    # Test In Progress
+    # -----------------------------
     if st.session_state.test_started and not st.session_state.submitted:
         now = datetime.now()
-        if st.session_state.test_end_time is not None and now > st.session_state.test_end_time:
+        if now > st.session_state.test_end_time:
             st.warning("Time is up! Submitting automatically.")
             st.session_state.submitted = True
-
         else:
             questions = st.session_state.questions
             show_question_tracker()
             q_index = st.session_state.current_q
             q = questions[q_index]
 
-            st.markdown(
-                f"<h3 style='font-size:24px; font-weight:600;'>Q{q_index + 1}. {q['question']}</h3>",
-                unsafe_allow_html=True
-            )
-
-            options = [""] + q["options"]  # Add empty option as first
+            st.markdown(f"**Q{q_index + 1}. {q['question']}**")
+            options = [""] + q["options"]
             selected = st.session_state.answers[q_index]
 
             st.session_state.answers[q_index] = st.radio(
@@ -269,26 +181,16 @@ def run_student_mode():
                 index=options.index(selected) if selected in options else 0,
                 key=f"q_{q_index}"
             )
-            # Initialize marked_for_review set if it doesn't exist
-            if "marked_for_review" not in st.session_state:
-                st.session_state.marked_for_review = set()
 
-            # Is current question marked?
+            # Mark for review
             is_marked = q_index in st.session_state.marked_for_review
-
-            # Checkbox for marking the question for review
-            mark_toggle = st.checkbox(
-                "Mark this question for review",
-                value=is_marked,
-                key=f"mark_review_{q_index}"
-            )
-
-            # Update the set based on toggle
+            mark_toggle = st.checkbox("Mark this question for review", value=is_marked, key=f"mark_review_{q_index}")
             if mark_toggle:
                 st.session_state.marked_for_review.add(q_index)
             else:
                 st.session_state.marked_for_review.discard(q_index)
 
+            # Navigation
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.button("Previous", on_click=lambda: st.session_state.update(current_q=st.session_state.current_q - 1), disabled=q_index == 0)
@@ -298,17 +200,16 @@ def run_student_mode():
                 if st.button("Submit Test"):
                     st.session_state.submitted = True
 
-
-    # ?? Result Summary
+    # -----------------------------
+    # Result Summary
+    # -----------------------------
     if st.session_state.submitted:
         correct, details = calculate_score(st.session_state.questions, st.session_state.answers)
         total = len(st.session_state.questions)
         percent = (correct / total) * 100
 
-        # ?? Score feedback
+        # Score & Feedback
         st.success(f" Score: {correct}/{total} ({percent:.2f}%)")
-
-        # ?? Feedback + animation
         if percent >= 90:
             st.balloons()
             st.markdown("###Excellent work! You're a star!")
@@ -320,7 +221,7 @@ def run_student_mode():
         else:
             st.warning("###  Keep trying! Practice makes perfect!")
 
-        # ?? Quick summary
+        # Quick counts
         correct_count = sum(1 for d in details if d['is_correct'])
         wrong_count = total - correct_count
         col1, col2 = st.columns(2)
@@ -329,62 +230,44 @@ def run_student_mode():
         with col2:
             st.error(f"Wrong: {wrong_count}")
 
-        # ?? Detailed Answer View + PDF
+        # Detailed answers & PDF
         with st.expander("View Correct / Wrong Answers & Download Your Results"):
             for i, d in enumerate(details):
                 st.write(f"**Q{i + 1}: {d['question']}**")
-                st.write(f"? Correct Answer: {d['correct_answer']}")
-                st.write(f"?? Your Answer: {d['your_answer'] or 'No Answer'}")
+                st.write(f" Correct Answer: {d['correct_answer']}")
+                st.write(f" Your Answer: {d['your_answer'] or 'No Answer'}")
                 if d['is_correct']:
                     st.success("Correct")
                 else:
                     st.error("Incorrect")
                 st.divider()
 
-            # Simple PDF export
-
-            # Show school info and timestamp
+            # School info & timestamp
             logo_path = "assets/logo.png"
             school_name = "SmartTest Academy"
             timestamp = datetime.now().strftime("%d-%m-%Y %H:%M")
 
             st.image(logo_path, width=80)
-            st.markdown(f"## ?? {school_name}")
-            st.markdown(f"?? **Date:** {timestamp}")
-            st.markdown(
-                f" **Student:** {student['name']}  |  **Class:** {student['class'].upper()}  |  **Subject:** {st.session_state.subject}")
+            st.markdown(f" ## {school_name}")
+            st.markdown(f" **Date:** {timestamp}")
+            st.markdown(f" *Student:** {student['name']}  |  **Class:** {student['class'].upper()}  |  **Subject:** {st.session_state.subject}")
             st.markdown(f" **Score:** {correct}/{total} ({percent:.2f}%)")
 
-            # ?? Feedback
-            if percent >= 90:
-                st.balloons()
-                st.markdown("###Excellent work! You're a star!")
-            elif percent >= 70:
-                st.snow()
-                st.markdown("###  Good job! You're getting there!")
-            elif percent >= 50:
-                st.info("### Fair effort. A little more practice will help!")
-            else:
-                st.warning("### Download result summary!")
-
-            # ?? Quick Count
-            # ?? View full result in a nice table
+            # Detailed table
             st.markdown("### Detailed Answers")
             df = pd.DataFrame([{
                 "Q#": i + 1,
                 "Question": d["question"],
                 "Your Answer": d["your_answer"],
                 "Correct Answer": d["correct_answer"],
-                "Result": "? Correct" if d["is_correct"] else "? Wrong"
+                "Result": " Correct" if d["is_correct"] else "Wrong"
             } for i, d in enumerate(details)])
-
             st.dataframe(df, use_container_width=True)
 
-            # ?? PDF Generation Function
+            # PDF Generation
             def generate_pdf(name, class_name, subject, correct, total, percent, details):
                 pdf = FPDF()
                 pdf.add_page()
-
                 pdf.image(logo_path, x=10, y=8, w=25)
                 pdf.set_font("Arial", 'B', 16)
                 pdf.cell(80)
@@ -394,17 +277,14 @@ def run_student_mode():
                 pdf.cell(0, 10, f"Student: {name} | Class: {class_name} | Subject: {subject}", ln=True)
                 pdf.cell(0, 10, f"Score: {correct}/{total} ({percent:.2f}%)", ln=True)
                 pdf.ln(5)
-
                 for i, d in enumerate(details):
                     pdf.set_font("Arial", size=11)
                     pdf.multi_cell(0, 10,
-                                   f"Q{i + 1}: {d['question']}\nYour Answer: {d['your_answer']}\nCorrect Answer: {d['correct_answer']}\nResult: {'Correct' if d['is_correct'] else 'Wrong'}",
-                                   border=1)
+                        f"Q{i + 1}: {d['question']}\nYour Answer: {d['your_answer']}\nCorrect Answer: {d['correct_answer']}\nResult: {'Correct' if d['is_correct'] else 'Wrong'}",
+                        border=1)
                     pdf.ln(1)
-
                 return pdf.output(dest='S').encode('latin1')
 
-            # ?? Offer PDF download
             pdf_bytes = generate_pdf(
                 name=student['name'],
                 class_name=student['class'],
@@ -414,5 +294,4 @@ def run_student_mode():
                 percent=percent,
                 details=details
             )
-
-            st.download_button("Download Results as PDF", data=pdf_bytes, file_name="smarttest_result.pdf")
+            st.download_button("Download Results as PDF", data=pdf_bytes, file_name="smartest_result.pdf")
