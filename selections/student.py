@@ -105,6 +105,8 @@ def run_student_mode():
                 st.success(f"Student: {student_perf['name']} | Class: {student_perf['class']}")
                 # QR now points to deployed URL
                 url = f"https://smarttests-3.onrender.com/?page=results&access_code={access_code_perf.strip()}"
+                st.write("QR URL:", url)
+
                 qr_img_buf = generate_qr_code(url)
                 st.image(qr_img_buf, caption="Scan this QR to view performance", use_container_width=False)
             else:
