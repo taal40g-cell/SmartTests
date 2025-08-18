@@ -59,14 +59,14 @@ def run_student_mode():
     if not st.session_state.logged_in:
         st.markdown("""
             <div style='margin-bottom: 2px; font-size: 16px; font-weight: 600;'>
-                Enter Access Code
+               Enter logins:
                 <span title='Access code given by Admin' style='cursor: help;'></span>
             </div>
         """, unsafe_allow_html=True)
 
         access_code = st.text_input(
-            label="Access Code",
-            placeholder="e.g., 1234",
+            label="Logins",
+            placeholder="code given by Admin",
             key="access_code_input",
             label_visibility="collapsed"
         )
@@ -87,7 +87,7 @@ def run_student_mode():
     # -----------------------------
     with st.sidebar:
         st.header("View Past Performance")
-        access_code_perf = st.text_input("Enter Access Code for Performance", key="perf_code_input")
+        access_code_perf = st.text_input("Enter Access Code")
 
         def generate_qr_code(data):
             qr = qrcode.QRCode(version=1, box_size=8, border=2)
@@ -103,10 +103,7 @@ def run_student_mode():
             student_perf = users_dict.get(access_code_perf.strip())
             if student_perf:
                 st.success(f"Student: {student_perf['name']} | Class: {student_perf['class']}")
-                # QR now points to deployed URL
-                url = f"https://smarttests-3.onrender.com/?page=results&access_code={access_code_perf.strip()}"
-                st.write("QR URL:", url)
-
+                url = f"http://localhost:8501/?page=results&access_code={access_code_perf.strip()}"
                 qr_img_buf = generate_qr_code(url)
                 st.image(qr_img_buf, caption="Scan this QR to view performance", use_container_width=False)
             else:
@@ -117,7 +114,7 @@ def run_student_mode():
     # -----------------------------
     student = st.session_state.student
     class_name = student['class']
-    st.info(f"{student['name']} | Class: {class_name.upper()}")
+    st.info(f"{student['name']} | ?? Class: {class_name.upper()}")
 
     # -----------------------------
     # Subject Selection
@@ -262,7 +259,7 @@ def run_student_mode():
                 "Question": d["question"],
                 "Your Answer": d["your_answer"],
                 "Correct Answer": d["correct_answer"],
-                "Result": " Correct" if d["is_correct"] else "Wrong"
+                "Result": "? Correct" if d["is_correct"] else "? Wrong"
             } for i, d in enumerate(details)])
             st.dataframe(df, use_container_width=True)
 
@@ -297,3 +294,5 @@ def run_student_mode():
                 details=details
             )
             st.download_button("Download Results as PDF", data=pdf_bytes, file_name="smartest_result.pdf")
+
+
