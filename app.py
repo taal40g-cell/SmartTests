@@ -2,8 +2,9 @@ import streamlit as st
 from ui import set_background
 from selections.student import run_student_mode
 from selections.admin import run_admin_mode
-import os
+import json
 
+# --- Load admin configuration ---
 # --- Clear cached data/resources on every run ---
 st.cache_data.clear()
 st.cache_resource.clear()
@@ -33,7 +34,7 @@ def results_page():
 # --- Main app ---
 def main():
     # Always reset background to latest version
-    set_background("assets/1.png")
+    set_background("assets/scr.png")
 
     # Handle results page query param
     page = st.query_params.get("page", [None])[0]
@@ -55,8 +56,14 @@ def main():
         st.rerun()
 
     # Sidebar menu
-    menu_options = ["Student Mode", "Admin Panel", "Refresh App", "Exit App"]
-    default_index = menu_options.index(st.session_state.menu_selection)
+    menu_options = ["Student Mode", "Admin Panel",  "Exit App"]
+    # safe lookup: if session value not present, fall back to index 0
+    try:
+        default_index = menu_options.index(st.session_state.menu_selection)
+    except ValueError:
+        default_index = 0
+        st.session_state.menu_selection = menu_options[0]
+
     mode = st.sidebar.radio("📋 Menu", menu_options, index=default_index)
     st.session_state.menu_selection = mode
 
@@ -65,9 +72,8 @@ def main():
         run_student_mode()
     elif mode == "Admin Panel":
         run_admin_mode()
-    elif mode == "Refresh App":
-        st.session_state.trigger_refresh = True
-        st.rerun()
+
+
     elif mode == "Exit App":
         st.session_state.logged_in = False
         st.session_state.access_code = ""

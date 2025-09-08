@@ -1,0 +1,13 @@
+{
+  "admins": [
+    {
+      "username": "admin1",
+      "password": "changeme123"
+    },
+    {
+      "username": "admin2",
+      "password": "changeme456"
+    }
+  ],
+  "idle_timeout_minutes": 5
+}

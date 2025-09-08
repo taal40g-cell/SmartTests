@@ -1,188 +1,436 @@
-import random
-from datetime import datetime
-import csv
-import bcrypt
-import pandas as pd
-from config import ADMIN_USERNAME, ADMIN_PASSWORD
-import qrcode
-from io import BytesIO
-import io
-import zipfile
 import os
 import json
-from fpdf import FPDF
+import random
+import string
+import io
+import zipfile
 import streamlit as st
-import base64
+from fpdf import FPDF
+import hashlib
+from datetime import datetime
+
+# =====================================================================
+# UNIFIED DATA STORAGE
+# =====================================================================
+
+UNIFIED_FILE = "unified_data.json"
+
+def _load_unified_data():
+    if not os.path.exists(UNIFIED_FILE):
+        return {
+            "users": {},
+            "retakes": {},
+            "submissions": [],
+            "leaderboard": [],
+            "admin_config": {"duration": 30},  # legacy single-admin
+            "questions": {},
+            "admins": {},  # new multi-admin
+            "admin_logs": []
+        }
+    with open(UNIFIED_FILE, "r") as f:
+        return json.load(f)
+
+def _save_unified_data(data):
+    with open(UNIFIED_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
 
+# =====================================================================
+# USERS
+# =====================================================================
+def get_users():
+    return _load_unified_data().get("users", {})
+
+def set_users(users):
+    data = _load_unified_data()
+    data["users"] = users
+    _save_unified_data(data)
+
+
+# =====================================================================
+# RETAKES
+# =====================================================================
+def get_retakes():
+    return _load_unified_data().get("retakes", {})
+
+def set_retakes(retakes):
+    data = _load_unified_data()
+    data["retakes"] = retakes
+    _save_unified_data(data)
+
+def grant_retake(access_code: str, subject: str):
+    data = _load_unified_data()
+    subj_key = subject.strip().lower()
+    if "retakes" not in data:
+        data["retakes"] = {}
+    if access_code not in data["retakes"]:
+        data["retakes"][access_code] = {}
+    data["retakes"][access_code][subj_key] = True
+    _save_unified_data(data)
+    return True
+
+
+# =====================================================================
+# SUBMISSIONS
+# =====================================================================
+def get_submissions():
+    return _load_unified_data().get("submissions", [])
+
+def set_submissions(submissions):
+    data = _load_unified_data()
+    data["submissions"] = submissions
+    _save_unified_data(data)
+
+
+# =====================================================================
+# LEADERBOARD
+# =====================================================================
+def get_leaderboard():
+    return _load_unified_data().get("leaderboard", [])
+
+def set_leaderboard(lb):
+    data = _load_unified_data()
+    data["leaderboard"] = lb
+    _save_unified_data(data)
+
+
+# =====================================================================
+# LEGACY SINGLE-ADMIN SYSTEM
+# =====================================================================
+# Only supports one admin. Will be removed later.
+# Uses `admin_config` dictionary in unified_data.json
+
+def get_admin_config():
+    return _load_unified_data().get(
+        "admin_config",
+        {"admin_username": "admin", "admin_password": "admin123"}
+    )
+
+def set_admin_config(config):
+    data = _load_unified_data()
+    data["admin_config"] = config
+    _save_unified_data(data)
 
 def require_admin_login():
     if "admin_logged_in" not in st.session_state:
-        st.session_state["admin_logged_in"] = False
+        st.session_state.admin_logged_in = False
 
-    if not st.session_state["admin_logged_in"]:
-        st.subheader("Admin Login")
-        username = st.text_input("Username", key="admin_username")
-        password = st.text_input("Password", type="password", key="admin_password")
-
+    if not st.session_state.admin_logged_in:
+        config = get_admin_config()
+        st.subheader("?? Admin Login")
+        username = st.text_input("Username", key="admin_username_input")
+        password = st.text_input("Password", type="password", key="admin_password_input")
         if st.button("Login"):
-
-            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-                st.session_state["admin_logged_in"] = True
-                st.success("Login successful")
+            if username == config["admin_username"] and password == config["admin_password"]:
+                st.session_state.admin_logged_in = True
+                st.success("? Login successful")
+                st.rerun()
             else:
-                st.error("Incorrect username or password")
+                st.error("? Invalid username or password")
         return False
-
     return True
 
-# ----------------------------- Session Initialization -----------------------------
+def change_admin_password_ui():
+    st.subheader("?? Change Admin Password")
+    config = get_admin_config()
+    current_password = st.text_input("Current Password", type="password")
+    new_password = st.text_input("New Password", type="password")
+    confirm_password = st.text_input("Confirm New Password", type="password")
+    if st.button("Update Password"):
+        if current_password != config.get("password", ""):
+            st.error("? Current password is incorrect")
+        elif new_password != confirm_password:
+            st.error("? Passwords do not match")
+        else:
+            config["password"] = new_password
+            set_admin_config(config)
+            st.success("? Password updated successfully")
+
+# =====================================================================
+# NEW MULTI-ADMIN SYSTEM
+# =====================================================================
+# Supports multiple admins with hashed passwords and logs
+# Uses `admins` and `admin_logs` in unified_data.json
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
-# ----------------------------- Background -----------------------------
-
-def show_progress_chart():
-    answers = st.session_state.get("answers", {})
-    marked = st.session_state.get("marked_review", {})
-
-    total = len(answers)
-    answered = sum(1 for a in answers.values() if a)
-    marked_review = sum(1 for k, v in marked.items() if v)
-    unanswered = total - answered
-
-    fig = go.Figure(data=[go.Pie(
-        labels=["Answered", "Marked for Review", "Unanswered"],
-        values=[answered, marked_review, unanswered],
-        hole=0.4
-    )])
-    fig.update_traces(textinfo="label+value", pull=[0.05, 0.05, 0])
-    st.plotly_chart(fig, use_container_width=True)
-# ----------------------------- User Management -----------------------------
-# Dictionary version (used for fast access in Student test mode)
-
-# List version (used for access slips, loops, etc.)
-def load_users():
-
-    users = []
-    if os.path.exists("users.csv"):
-        with open("users.csv", "r", newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            users = list(reader)
-    return users
-
-def load_users_list():
-    import csv
-    users_list = []
-    with open("users.csv", newline='', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            users_list.append({
-                "access_code": row.get("access_code", "").strip(),
-                "name": row.get("name", "").strip(),
-                "class": row.get("class", "").strip(),
-                "can_retake": row.get("can_retake", "").strip().lower() == "true"
-            })
-    return users_list
+def add_admin(username: str, password: str, role: str = "admin", actor: str = "system"):
+    data = _load_unified_data()
+    if username in data.get("admins", {}):
+        return False, "❌ Admin already exists"
+    data.setdefault("admins", {})[username] = {"password": _hash_password(password), "role": role}
+    data.setdefault("admin_logs", []).append({
+        "admin": actor,
+        "action": f"Created admin {username} with role {role}",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    _save_unified_data(data)
+    return True, f"✅ Admin {username} created"
 
 
-def save_users(users):
-    with open("users.csv", "w", encoding="utf-8") as f:
-        f.write("access_code,name,class,can_retake\n")
-        for user in users:
-            f.write(f"{user['access_code']},{user['name']},{user['class']},{user['can_retake']}\n")
+def remove_admin(username: str, actor: str):
+    data = _load_unified_data()
+    if username not in data.get("admins", {}):
+        return False, "❌ Admin not found"
+    del data["admins"][username]
+    data.setdefault("admin_logs", []).append({
+        "admin": actor,
+        "action": f"Removed admin {username}",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    _save_unified_data(data)
+    return True, f"✅ Admin {username} removed"
 
-def generate_access_code(name):
-    base = name.replace(" ", "").lower()
-    code = base[:4] + str(datetime.now().microsecond)[-4:]
-    return code
 
-def generate_access_slips_with_qr(users, folder="access_slips"):
-    import io
-    import zipfile
-    from fpdf import FPDF
-    import os
+def authenticate_admin(username: str, password: str):
+    data = _load_unified_data()
+    admin = data.get("admins", {}).get(username)
+    if not admin:
+        return False, "❌ Invalid username"
+    if admin["password"] != _hash_password(password):
+        return False, "❌ Invalid password"
+    return True, admin["role"]
 
-    if not os.path.exists(folder):
-        os.makedirs(folder)
 
-    for user in users:
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=14)
-        pdf.cell(0, 10, "Access Slip", ln=True, align="C")
-        pdf.ln(10)
+def log_admin_action(admin: str, action: str):
+    data = _load_unified_data()
+    data.setdefault("admin_logs", []).append({
+        "admin": admin,
+        "action": action,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    _save_unified_data(data)
 
-        pdf.set_font("Arial", size=12)
-        pdf.cell(0, 10, f"Name: {user['name']}", ln=True)
-        pdf.cell(0, 10, f"Class: {user['class']}", ln=True)
-        pdf.cell(0, 10, f"Access Code: {user['access_code']}", ln=True)
+# =====================================================================
+# QUESTIONS
+# =====================================================================
+QUESTIONS_DIR = "questions"
 
-        # Generate QR code
-        qr_buf = generate_qr_code(user["access_code"])
-        qr_file = f"{user['access_code']}.png"
-        with open(qr_file, "wb") as f:
-            f.write(qr_buf.read())
-        pdf.image(qr_file, x=10, y=60, w=50, h=50)
-        os.remove(qr_file)
+def get_questions(class_name, subject_name):
+    key = f"questions_{class_name.strip().lower()}_{subject_name.strip().lower()}.json"
+    file_path = os.path.join(QUESTIONS_DIR, key)
+    if not os.path.exists(file_path):
+        return []
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"Error loading questions: {e}")
+        return []
 
-        file_path = os.path.join(folder, f"{user['access_code']}.pdf")
-        pdf.output(file_path)
+def set_questions(class_name, subject_name, questions):
+    os.makedirs(QUESTIONS_DIR, exist_ok=True)
+    key = f"questions_{class_name.strip().lower()}_{subject_name.strip().lower()}"
+    file_path = os.path.join(QUESTIONS_DIR, f"{key}.json")
+    if isinstance(questions, dict) and "questions" in questions:
+        questions_to_save = questions["questions"]
+    elif isinstance(questions, list):
+        questions_to_save = questions
+    else:
+        raise ValueError("Questions must be a list or a dict with 'questions' key")
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(questions_to_save, f, indent=4)
+    return file_path
 
-    # Zip the folder
+def delete_question_file(class_name, subject_name):
+    data = _load_unified_data()
+    if ("questions" in data
+        and class_name in data["questions"]
+        and subject_name in data["questions"][class_name]):
+        del data["questions"][class_name][subject_name]
+        _save_unified_data(data)
+
+
+# =====================================================================
+# UTILITIES (access codes, slips)
+# =====================================================================
+def generate_access_code(name, existing_codes):
+    while True:
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        if code not in existing_codes:
+            return code
+
+def generate_access_slips(users):
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for file in os.listdir(folder):
-            zipf.write(os.path.join(folder, file), file)
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        for user in users.values():
+            content = (
+                f"Access Code: {user['access_code']}\n"
+                f"Name: {user['name']}\n"
+                f"Class: {user['class']}"
+            )
+            zf.writestr(f"{user['access_code']}.txt", content)
     zip_buffer.seek(0)
     return zip_buffer
 
 
+# =====================================================================
+# TEST LOGIC & RESET
+# =====================================================================
+def reset_test(access_code: str = None):
+    data = _load_unified_data()
+    if access_code:
+        data["submissions"] = [s for s in data.get("submissions", []) if s.get("access_code") != access_code]
+        data["leaderboard"] = [s for s in data.get("leaderboard", []) if s.get("access_code") != access_code]
+        users = data.get("users", {})
+        if access_code in users:
+            users[access_code]["submitted"] = False
+        data["users"] = users
+    else:
+        data["submissions"] = []
+        data["leaderboard"] = []
+        users = data.get("users", {})
+        for u in users.values():
+            u["submitted"] = False
+        data["users"] = users
+    _save_unified_data(data)
 
-def allow_retake_toggle(access_code, value):
-    users = load_users()
+def can_take_test(access_code: str, subject: str):
+    users = get_users()
+    if not users or access_code not in users:
+        return False, "? Invalid access code"
+
+    subj_key = subject.strip().lower()
+    submissions = get_submissions()
+    submitted_subjects = {s["subject"].strip().lower() for s in submissions if s.get("access_code", "") == access_code}
+
+    retakes = get_retakes()
+    allowed_subjects = retakes.get(access_code, {})
+
+    if subj_key in submitted_subjects and not allowed_subjects.get(subj_key, False):
+        return False, f"? Already submitted {subject}. Retake not allowed."
+    if allowed_subjects.get(subj_key, False):
+        allowed_subjects[subj_key] = False
+        retakes[access_code] = allowed_subjects
+        set_retakes(retakes)
+    return True, "? Allowed to take test"
+
+def save_submission(access_code: str, subject: str, score: float, answers: dict):
+    data = _load_unified_data()
+    subj_key = subject.strip().lower()
+    submissions = data.get("submissions", [])
+    existing = [s for s in submissions if s["access_code"] == access_code and s["subject"].strip().lower() == subj_key]
+    retakes = data.get("retakes", {})
+    allowed_subjects = retakes.get(access_code, {})
+    if existing and not allowed_subjects.get(subj_key, False):
+        return False
+    if allowed_subjects.get(subj_key, False):
+        allowed_subjects[subj_key] = False
+        retakes[access_code] = allowed_subjects
+        set_retakes(retakes)
+    users = data.get("users", {})
     if access_code in users:
-        users[access_code]["can_retake"] = value
-        save_users(users)
+        users[access_code]["submitted"] = True
+    data["users"] = users
+    data.setdefault("submissions", []).append({
+        "access_code": access_code,
+        "subject": subject,
+        "score": score,
+        "answers": answers,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    data.setdefault("leaderboard", []).append({
+        "access_code": access_code,
+        "subject": subject,
+        "score": score
+    })
+    _save_unified_data(data)
+    return True
+
+# =====================================================================
+# PDF GENERATION
+# =====================================================================
+def generate_result_pdf(student, questions, answers, score):
+    """Generate a PDF of a student's test results."""
+    buffer = io.BytesIO()
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # Header
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "SmarTest Results", ln=True, align="C")
+    pdf.ln(10)
+
+    # Student Info
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 10, f"Name: {student['name']}", ln=True)
+    pdf.cell(0, 10, f"Class: {student['class']}", ln=True)
+    pdf.cell(0, 10, f"Access Code: {student['access_code']}", ln=True)
+    pdf.cell(0, 10, f"Score: {score}%", ln=True)
+    pdf.ln(10)
+
+    # Questions & Answers
+    pdf.set_font("Arial", size=11)
+    for idx, q in enumerate(questions, start=1):
+        student_ans = answers.get(str(idx), "Not Answered")
+        pdf.multi_cell(0, 10, f"Q{idx}: {q['question']}")
+        pdf.cell(0, 10, f"Your Answer: {student_ans}", ln=True)
+        pdf.cell(0, 10, f"Correct Answer: {q['answer']}", ln=True)
+        pdf.ln(5)
+
+    pdf.output(buffer)
+    buffer.seek(0)
+    return buffer
 
 
-# ----------------------------- Question Management -----------------------------
+# =====================================================================
+# QUESTION TRACKER
+# =====================================================================
+def show_question_tracker(questions, current_index, answers):
+    """Display a progress tracker with color-coded question buttons."""
+    total = len(questions)
+    marked = st.session_state.get("marked_for_review", set())
+    show_all = st.session_state.get("show_all_tracker", False)
+    st.session_state.current_q = current_index
 
-def get_question_file_name(class_name, subject_name):
-    class_name = class_name.replace(" ", "").lower()
-    subject_name = subject_name.replace(" ", "").lower()
-    return f"questions_{class_name}_{subject_name}.json"
+    st.markdown(
+        '<div style="position:sticky; top:0; z-index:999; background:#f0f2f6; '
+        'padding:10px; border-bottom:1px solid #ccc;">',
+        unsafe_allow_html=True
+    )
+    st.markdown("### Progress Tracker")
+    st.session_state.show_all_tracker = st.checkbox("Show all", value=show_all)
+
+    def render_range(start, end):
+        cols = st.columns(10)
+        for i in range(start, end):
+            if i in marked:
+                color = "orange"
+            elif i < len(answers) and answers[i]:
+                color = "green"
+            else:
+                color = "red"
+
+            label = f"Q{i+1}"
+            if cols[i % 10].button(label, key=f"jump_{i}", use_container_width=True):
+                st.session_state.current_q = i
+            cols[i % 10].markdown(
+                f"<div style='background-color:{color}; color:white; padding:5px; "
+                f"text-align:center; border-radius:4px;'>{label}</div>",
+                unsafe_allow_html=True
+            )
+
+    if show_all or total <= 10:
+        render_range(0, total)
+    else:
+        render_range(0, 10)
+        with st.expander(f"Show remaining {total-10} questions"):
+            render_range(10, total)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
-def save_questions(class_name, subject_name, questions):
-    file_name = get_question_file_name(class_name, subject_name)
-    with open(file_name, "w") as f:
-        json.dump(questions, f)
-
-    #st.write("?? Trying to load:", file_name)
-    if not os.path.exists(file_name):
-        st.error(f"? File not found: {file_name}")
-        return []
-    with open(file_name, "r") as f:
-        questions = json.load(f)
-      # st.write(f"? Loaded {len(questions)} questions")
-        return questions
-
-
-def delete_question_file(class_name, subject_name):
-    file_name = get_question_file_name(class_name, subject_name)
-    if os.path.exists(file_name):
-        os.remove(file_name)
-
-
-# ----------------------------- Score & Result -----------------------------
-
-# ----------------------------- Score & Result -----------------------------
-
+# =====================================================================
+# SCORE CALCULATION
+# =====================================================================
 def calculate_score(questions, answers):
+    """Calculate total score and detailed result per question."""
     score = 0
     detailed = []
     for i, q in enumerate(questions):
-        # Access the user's answer by index with fallback
         user_ans = answers[i] if i < len(answers) and answers[i] else "No Answer"
         correct_ans = q["answer"]
         correct = user_ans.strip().lower() == correct_ans.strip().lower()
@@ -196,492 +444,132 @@ def calculate_score(questions, answers):
         })
     return score, detailed
 
-def save_student_result(access_code, result_entry, folder="results"):
-    """
-    Saves a student's test result to a JSON file.
-    """
-    os.makedirs(folder, exist_ok=True)
-    file_path = os.path.join(folder, f"{access_code}.json")
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(result_entry, f, indent=4)
 
-def load_results_detail(access_code, folder="results"):
-    file_path = os.path.join(folder, f"{access_code}.json")
-    if not os.path.exists(file_path):
-        return {}
-    with open(file_path, "r") as f:
-        return json.load(f)
-
-def save_result_pdf(access_code, result_entry, folder="result_pdfs"):
-    print(f"Saving PDF for {access_code}")
-
-    os.makedirs(folder, exist_ok=True)
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-
-    pdf.cell(0, 10, f"?? Result Summary for: {result_entry.get('name', '')}", ln=True)
-    pdf.cell(0, 10, f"Class: {result_entry.get('class', '')}", ln=True)
-    pdf.cell(0, 10, f"Subject: {result_entry.get('subject', '')}", ln=True)
-    pdf.cell(0, 10, f"Score: {result_entry.get('score', '')} / {result_entry.get('total', '')}", ln=True)
-    pdf.cell(0, 10, f"Percentage: {result_entry.get('percentage', '')}%", ln=True)
-    pdf.ln(10)
-
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Answer Breakdown:", ln=True)
-    pdf.set_font("Arial", "", 11)
-
-    for i, detail in enumerate(result_entry.get("details", []), start=1):
-        pdf.multi_cell(0, 10, f"{i}. {detail['question']}\n"
-                              f"Your Answer: {detail['your_answer']}\n"
-                              f"Correct Answer: {detail['correct_answer']}\n"
-                              f"{'? Correct' if detail['is_correct'] else '? Incorrect'}", border=1)
-        pdf.ln(2)
-
-    file_path = os.path.join(folder, f"{access_code}.pdf")
-    pdf.output(file_path)
-
-# ----------------------------- Admin Config -----------------------------
-
-def save_admin_config(config):
-    with open("admin_config.json", "w") as f:
-        json.dump(config, f)
-
-
-def load_admin_config():
-    if os.path.exists("admin_config.json"):
-        with open("admin_config.json", "r") as f:
-            return json.load(f)
-    return {}
-
-
-# ----------------------------- Leaderboard -----------------------------
-
-def load_leaderboard(file_path="leaderboard.json"):
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            return json.load(f)
-    return []
-
-
-def save_leaderboard(data, file_path="leaderboard.json"):
-    with open(file_path, "w") as f:
-        json.dump(data, f, indent=4)
-
-def generate_access_slips(users, folder="access_slips"):
-    # Ensure folder exists
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-
-    # Create PDFs
-    for user in users:
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=14)
-        pdf.cell(0, 10, txt="Access Slip", ln=True, align='C')
-        pdf.ln(10)
-
-        pdf.set_font("Arial", size=12)
-        pdf.set_text_color(0, 0, 160)
-        pdf.cell(0, 10, f"Name: {user.get('name', '')}", ln=True)
-        pdf.cell(0, 10, f"Class: {user.get('class', '')}", ln=True)
-        pdf.cell(0, 10, f"Access Code: {user.get('access_code', '')}", ln=True)
-        pdf.cell(0, 10, f"Retake Allowed: {'Yes' if user.get('can_retake', True) else 'No'}", ln=True)
-
-        file_name = f"{folder}/{user['access_code']}.pdf"
-        pdf.output(file_name)
-
-    # Create ZIP in memory
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for file in os.listdir(folder):
-            zipf.write(os.path.join(folder, file), file)
-    zip_buffer.seek(0)
-
-    return zip_buffer
-
-def zip_slips_folder(folder="access_slips"):
-    zip_filename = "AccessSlips.zip"
-    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(folder):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, folder)
-                zipf.write(file_path, arcname)
-    return zip_filename
-
-
-# ----------------------------- UI Helpers -----------------------------
-
-def add_user_ui():
-    st.subheader(" Add New Student")
-    name = st.text_input("Student Name")
-    class_name = st.text_input("Class")
-    can_retake = st.checkbox("Allow Retake", value=True)
-
-    if st.button("Generate Access Code"):
-        access_code = generate_access_code(name)
-        new_user = {
-            "access_code": access_code,
-            "name": name,
-            "class": class_name,
-            "can_retake": can_retake
-        }
-        users = load_users()
-        users.append(new_user)
-        # Save to CSV
-        with open("users.csv", "a", newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=["access_code", "name", "class", "can_retake"])
-            if f.tell() == 0:  # File is empty, write header
-                writer.writeheader()
-            writer.writerow(new_user)
-
-        st.success(f"? User '{name}' added with code: {access_code}")
-
-
-USERS_FILE = "users.csv"
-
-def change_admin_password_ui():
-    st.subheader(" Change Admin Password")
-
-    if not os.path.exists(USERS_FILE):
-        st.error(" No users file found !.")
-        return
-
-    users_df = pd.read_csv(USERS_FILE)
-
-    username = st.text_input("Admin Username")
-    old_password = st.text_input("Current Password", type="password")
-    new_password = st.text_input("New Password", type="password")
-    confirm_password = st.text_input("Confirm New Password", type="password")
-
-    if st.button("Update Password"):
-        if new_password != confirm_password:
-            st.warning("New passwords do not match.")
-            return
-
-        user_row = users_df[(users_df["username"] == username) & (users_df["role"] == "admin")]
-
-        if user_row.empty:
-            st.error("Admin user not found.")
-            return
-
-        stored_hash = user_row.iloc[0]["password"].encode('utf-8')
-        if not bcrypt.checkpw(old_password.encode('utf-8'), stored_hash):
-            st.error("Incorrect current password.")
-            return
-
-        new_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
-        users_df.loc[users_df["username"] == username, "password"] = new_hash.decode('utf-8')
-        users_df.to_csv(USERS_FILE, index=False)
-        st.success("Password updated successfully.")
-
-
-
-RETAKE_FILE = "retake_tracker.json"
-
-def load_retake_tracker():
-    if os.path.exists(RETAKE_FILE):
-        with open(RETAKE_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-def save_retake_tracker(data):
-    with open(RETAKE_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-def has_taken_subject(access_code, subject):
-    tracker = load_retake_tracker()
-    return subject in tracker.get(access_code, [])
-
-def mark_subject_taken(access_code, subject):
-    tracker = load_retake_tracker()
-    tracker.setdefault(access_code, []).append(subject)
-    save_retake_tracker(tracker)
-
-
-import plotly.graph_objects as go
-def show_question_status_chart(questions, answers, marked_review, class_name, subject_name):
-    status_dict = {"Unanswered": 0, "Answered": 0, "Marked for Review": 0}
-    for i, _ in enumerate(questions):
-        if i in marked_review:
-            status_dict["Marked for Review"] += 1
-        elif i in answers:
-            status_dict["Answered"] += 1
-        else:
-            status_dict["Unanswered"] += 1
-
-    labels = list(status_dict.keys())
-    values = list(status_dict.values())
-
-    fig = go.Figure(
-        data=[go.Pie(labels=labels, values=values, hole=0.4)],
-    )
-    fig.update_layout(
-        title_text="Question Status Overview",
-        showlegend=True,
-        margin=dict(t=30, b=0, l=0, r=0),
-    )
-
-    # Ensure the key is always unique
-    key_suffix = f"{class_name}_{subject_name}"
-    st.plotly_chart(fig, use_container_width=True, key=f"question_status_chart_{key_suffix}")
-
-def show_question_tracker():
-    total = len(st.session_state.questions)
-    answers = st.session_state.answers
-    marked = st.session_state.get("marked_for_review", set())
-    show_all = st.session_state.get("show_all_tracker", False)
-
-    # ?? Floating top tracker style
-    st.markdown("""
-        <style>
-        .floating-tracker {
-            position: -webkit-sticky;
-            position: sticky;
-            top: 0;
-            z-index: 999;
-            background-color: #f0f2f6;
-            padding: 10px 8px;
-            border-bottom: 1px solid #ddd;
-            border-radius: 8px;
-        }
-        .q-btn {
-            text-align: center;
-            font-size: 11px;
-            margin-top: -6px;
-            color: white;
-            border-radius: 4px;
-            padding: 4px 0;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="floating-tracker">', unsafe_allow_html=True)
-    st.markdown("###  Progress Tracker")
-
-    # ?? Toggle checkbox for full view
-    st.session_state.show_all_tracker = st.checkbox(
-        " Show all", value=show_all, key="toggle_tracker"
-    )
-
-    def render_tracker_range(start, end):
-        cols = st.columns(10)
-        for i in range(start, end):
-            color = "red"
-            if i in marked:
-                color = "orange"
-            elif answers[i]:
-                color = "green"
-
-            label = f"Q{i+1}"
-            if cols[i % 10].button(label, key=f"jump_q_{i}", use_container_width=True):
-                st.session_state.current_q = i
-            cols[i % 10].markdown(
-                f"<div class='q-btn' style='background-color:{color};'>{label}</div>",
-                unsafe_allow_html=True
-            )
-
-    # ?? Show compact by default, expandable
-    if st.session_state.show_all_tracker or total <= 10:
-        render_tracker_range(0, total)
-    else:
-        render_tracker_range(0, 10)
-        with st.expander(f" Show remaining {total - 10} questions"):
-            render_tracker_range(10, total)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # ?? Legend
-    st.markdown("""
-        <div style='margin-top:10px; font-size: 13px;'>
-            <span style="color:green;"> Answered</span> |
-            <span style="color:red;"> Not Answered</span> |
-            <span style="color:orange;"> Marked for Review</span>
-        </div>
-    """, unsafe_allow_html=True)
-
-
-def toggle_mark_for_review(q_index):
-    """
-    Toggles whether the current question is marked for review.
-    """
-    marked = st.session_state.get("marked_for_review", set())
-    is_marked = q_index in marked
-
-    toggle = st.checkbox(" Mark this question for review", value=is_marked)
-
-    if toggle:
-        marked.add(q_index)
-    else:
-        marked.discard(q_index)
-
-    st.session_state.marked_for_review = marked
-
-subject_map = {
-    "English": "english",
-    "Math": "mathematics",
-    "Science": "science",
-    "History": "history",
-    "Geography": "geography",
-    "Physics": "physics",
-    "Chemistry": "chemistry",
-    "Biology": "biology",
-    "ICT": "ict",
-    "Economics": "economics"
-}
-
-def load_questions(class_name, subject_name):
-    """Load and shuffle questions for the given class and subject."""
-    if not subject_name:
-        st.error("❌ No subject selected. Please choose a subject first.")
-        return []
-
-    safe_class = class_name.lower().replace(" ", "")
-    safe_subject = subject_map.get(subject_name, subject_name.lower().replace(" ", ""))
-    filename = f"questions_{safe_class}_{safe_subject}.json"
-    filepath = os.path.join("questions", filename)
-
-    if os.path.exists(filepath):
-        with open(filepath, "r", encoding="utf-8") as f:
-            questions = json.load(f)
-
-        random.shuffle(questions)  # Shuffle the questions for each test
-        return questions
-    else:
-        st.warning(f"⚠️ No questions found for {subject_name} in {class_name}.")
-        return []
-
-def generate_qr_code(data, box_size=8, border=2):
-    """Generate a QR code image as BytesIO buffer."""
-    qr = qrcode.QRCode(version=1, box_size=box_size, border=border)
-    qr.add_data(data)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    buf.seek(0)
-    return buf
-
-
-def load_results(access_code):
-    path = f"results/{access_code}.json"
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            return json.load(f)
-    return None
-
-def results_page(df=None):
-    access_code = st.query_params.get("access_code", [None])[0]
-
-    if not access_code:
-        st.error("No access code provided in URL.")
-        return
-
-    # Load individual result JSON
-    results = load_results(access_code)
-    if not results:
-        st.error("No results found for this access code.")
-        return
-
-    st.title(f"Results for {results.get('name', 'Unknown Student')}")
-    st.write(f"Class: {results.get('class', '')}")
-    st.write(f"Subject: {results.get('subject', '')}")
-    st.write(f"Score: {results.get('score', 0)} / {results.get('total', 0)}")
-    st.write(f"Percentage: {results.get('percentage', 0):.2f}%")
-
-    st.markdown("### Detailed Answers")
-    for i, detail in enumerate(results.get("details", []), start=1):
-        st.write(f"**Q{i}:** {detail['question']}")
-        st.write(f"- Your answer: {detail['your_answer']}")
-        st.write(f"- Correct answer: {detail['correct_answer']}")
-        st.write(f"- Result: {'✅ Correct' if detail['is_correct'] else '❌ Incorrect'}")
-        st.write("---")
-
-    # Optional: Show all attempts as a DataFrame if df is provided
-    if df is not None:
-        student_data = df[df['access_code'] == access_code]
-
-        st.markdown("### All Attempts")
-        if student_data.empty:
-            st.info("No performance records found for this student.")
-        else:
-            st.dataframe(student_data)
-
-def load_users_dict():
-    import csv
-    users_dict = {}
+# =====================================================================
+# QUESTION UPLOAD HANDLER
+# =====================================================================
+def handle_uploaded_questions(file, class_name, subject_name):
+    """Process JSON question upload from admin."""
     try:
-        with open("users.csv", newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                access_code = row.get("access_code", "").strip()
-                if access_code:
-                    users_dict[access_code] = {
-                        "name": row.get("name", "").strip(),
-                        "class": row.get("class", "").strip(),
-                        "can_retake": row.get("can_retake", "").strip().lower() == "true"
-                    }
-    except FileNotFoundError:
-        pass
-    return users_dict
+        content = file.read().decode("utf-8").strip()
+        try:
+            questions = json.loads(content)
+        except json.JSONDecodeError as e:
+            st.error(f"? Invalid JSON format: {e}")
+            st.info("Make sure your file uses double quotes and is valid JSON.")
+            return False
 
-def show_header():
-    st.markdown("<h2 style='text-align: center;'>?? SmartTest Student Portal</h2>", unsafe_allow_html=True)
-    st.write("Welcome to your personalized test center.")
+        if isinstance(questions, dict) and "questions" in questions:
+            questions = questions["questions"]
 
-def layout_top_controls(class_name, subject_name, duration):
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info(f" Class: **{class_name}**")
-        st.info(f" Subject: **{subject_name}**")
-    with col2:
-        from datetime import datetime
+        if not isinstance(questions, list):
+            st.error("? Uploaded file must be a JSON list or contain a 'questions' key with a list.")
+            return False
 
-        if "test_start_time" in st.session_state and "test_end_time" in st.session_state:
-            now = datetime.now()
-            remaining = st.session_state.test_end_time - now
-            if remaining.total_seconds() > 0:
-                minutes, seconds = divmod(int(remaining.total_seconds()), 60)
-                st.success(f"Time Remaining: {minutes:02}:{seconds:02}")
+        valid = [
+            q for q in questions
+            if isinstance(q, dict) and all(k in q for k in ("question", "options", "answer"))
+        ]
+        if not valid:
+            st.error("? No valid questions found in file.")
+            return False
+
+        set_questions(class_name, subject_name, valid)
+        st.success(f"? Uploaded {len(valid)} questions for {class_name} - {subject_name}")
+        return True
+
+    except Exception as e:
+        st.error(f"? Error handling uploaded file: {e}")
+        return False
+
+
+
+def load_questions(class_name: str, subject: str):
+    key = f"questions_{class_name.strip().lower()}_{subject.strip().lower()}.json"
+    file_path = os.path.join(QUESTIONS_DIR, key)
+
+    if not os.path.exists(file_path):
+        st.warning(f"No questions found for key: '{key}'")
+        return []
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        questions = data.get("questions", []) if isinstance(data, dict) else data
+        if not isinstance(questions, list):
+            st.warning(f"Invalid question format in: {file_path}")
+            return []
+
+        validated = [
+            {"question": q["question"], "options": q["options"], "answer": q["answer"]}
+            for q in questions
+            if isinstance(q, dict) and all(k in q for k in ("question", "options", "answer"))
+        ]
+
+        if not validated:
+            st.warning(f"No valid questions found in file: {file_path}")
+
+        return validated
+
+    except Exception as e:
+        st.error(f"Error loading questions from {file_path}: {e}")
+        return []
+
+
+def load_all_questions():
+    """
+    Loads all questions from QUESTIONS_DIR and returns a dict structured as:
+    {
+        "jhs1_math": [list of questions],
+        "jhs2_english": [list of questions],
+        ...
+    }
+    """
+    all_questions = {}
+
+    for filename in os.listdir(QUESTIONS_DIR):
+        if filename.startswith("questions_") and filename.endswith(".json"):
+            key = filename.replace(".json", "").replace("questions_", "")
+            file_path = os.path.join(QUESTIONS_DIR, filename)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                questions = data.get("questions", []) if isinstance(data, dict) else data
+                validated = [
+                    {"question": q["question"], "options": q["options"], "answer": q["answer"]}
+                    for q in questions
+                    if isinstance(q, dict) and all(k in q for k in ("question", "options", "answer"))
+                ]
+                if validated:
+                    all_questions[key] = validated
+            except Exception as e:
+                st.warning(f"Failed to load {filename}: {e}")
+
+    return all_questions
+
+
+def require_multi_admin_login():
+    """Multi-admin login UI. Returns True if logged in."""
+    if "admin_logged_in" not in st.session_state:
+        st.session_state.admin_logged_in = False
+        st.session_state.admin_username = None
+        st.session_state.admin_role = None
+
+    if not st.session_state.admin_logged_in:
+        st.subheader("🔑 Admin Login")
+        username = st.text_input("Username", key="multi_admin_username")
+        password = st.text_input("Password", type="password", key="multi_admin_password")
+
+        if st.button("Login"):
+            success, result = authenticate_admin(username.strip(), password)
+            if success:
+                st.session_state.admin_logged_in = True
+                st.session_state.admin_username = username.strip()
+                st.session_state.admin_role = result  # role: admin/moderator, etc.
+                st.success(f"✅ Login successful as '{username.strip()}' ({result})")
+                st.rerun()
             else:
-                st.error("? Time's up!")
-
-
-def send_sms(to_number, message):
-    """Mock SMS sender - no Twilio call"""
-    print(f"📩 [MOCK] SMS to {to_number}: {message}")
-
-# help.py
-import os, qrcode
-from datetime import datetime, timedelta
-
-def cleanup_qr_folder(folder, days_old=30):
-    """Remove QR files older than `days_old` days."""
-    if not os.path.exists(folder):
-        return
-    now = datetime.now()
-    for file in os.listdir(folder):
-        filepath = os.path.join(folder, file)
-        if os.path.isfile(filepath):
-            file_age = now - datetime.fromtimestamp(os.path.getmtime(filepath))
-            if file_age > timedelta(days=days_old):
-                os.remove(filepath)
-
-def generate_qr(data, filename=None, folder="qr_codes"):
-    """Generate a QR code image and return its file path."""
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-
-    # Cleanup old QR files
-    cleanup_qr_folder(folder, days_old=30)
-
-    # Auto-generate filename if not given
-    if not filename:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"qr_{timestamp}.png"
-
-    filepath = os.path.join(folder, filename)
-    img = qrcode.make(data)
-    img.save(filepath)
-    return filepath
+                st.error(result)
+        return False
+    return True
