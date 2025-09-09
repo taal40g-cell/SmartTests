@@ -1,8 +1,7 @@
-
-import streamlit as st
 import io
 import qrcode
 from fpdf import FPDF
+import streamlit as st
 from datetime import datetime, timedelta
 from helpers import (
     generate_result_pdf,
@@ -17,7 +16,7 @@ from helpers import (
 # =====================================================================
 # Student Mode Main Function
 # =====================================================================
-def run_student_mode():
+def run_student_mode(): # ✅ Ensures we always have correct Streamlit reference
     users_dict = get_users()
 
     # -----------------------------
@@ -45,10 +44,22 @@ def run_student_mode():
     st.markdown("Welcome to your personalized test center.")
 
     # -----------------------------
+    # Marquee Banner
+    # -----------------------------
+    st.markdown(
+        """
+        <marquee behavior="scroll" direction="left" scrollamount="5"
+            style="color: #fff; background-color: #2E86C1; padding: 8px; border-radius: 8px; font-weight: bold;">
+            🚀 New feature: Retakes are only enabled by Admins! 🎯 | 📢 Remember to submit your test before time runs out ⏳
+        </marquee>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------
     # Global CSS styling
     # -----------------------------
-    st.markdown("""
-        <style>
+    st.markdown("""<style>
         .small-input input, .small-input select {
             width: 150px !important; padding: 6px; font-size: 14px;
         }
@@ -60,8 +71,10 @@ def run_student_mode():
             border: 1px solid #ddd; background-color: #fafafa;
             box-shadow: 1px 1px 4px rgba(0,0,0,0.08);
         }
-        </style>
-    """, unsafe_allow_html=True)
+    </style>""", unsafe_allow_html=True)
+
+    # ✅ The rest of your code stays exactly as it is
+    # (login section, sidebar, subject selection, start test, results etc.)
 
     # =================================================================
     # Login
