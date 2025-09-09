@@ -161,7 +161,7 @@ def run_student_mode():
         # Load questions
         questions = load_questions(student.get("class", ""), st.session_state.subject)
         if not questions:
-            st.warning("No questions found for this subject.")
+            st.warning("Good Luck.")
             return
 
         # Initialize test session

@@ -117,34 +117,34 @@ def require_admin_login():
 
     if not st.session_state.admin_logged_in:
         config = get_admin_config()
-        st.subheader("?? Admin Login")
+        st.subheader(" Admin Login")
         username = st.text_input("Username", key="admin_username_input")
         password = st.text_input("Password", type="password", key="admin_password_input")
         if st.button("Login"):
             if username == config["admin_username"] and password == config["admin_password"]:
                 st.session_state.admin_logged_in = True
-                st.success("? Login successful")
+                st.success(" Login successful")
                 st.rerun()
             else:
-                st.error("? Invalid username or password")
+                st.error(" Invalid username or password")
         return False
     return True
 
 def change_admin_password_ui():
-    st.subheader("?? Change Admin Password")
+    st.subheader(" Change Admin Password")
     config = get_admin_config()
     current_password = st.text_input("Current Password", type="password")
     new_password = st.text_input("New Password", type="password")
     confirm_password = st.text_input("Confirm New Password", type="password")
     if st.button("Update Password"):
         if current_password != config.get("password", ""):
-            st.error("? Current password is incorrect")
+            st.error("Current password is incorrect")
         elif new_password != confirm_password:
-            st.error("? Passwords do not match")
+            st.error(" Passwords do not match")
         else:
             config["password"] = new_password
             set_admin_config(config)
-            st.success("? Password updated successfully")
+            st.success(" Password updated successfully")
 
 # =====================================================================
 # NEW MULTI-ADMIN SYSTEM
@@ -290,7 +290,7 @@ def reset_test(access_code: str = None):
 def can_take_test(access_code: str, subject: str):
     users = get_users()
     if not users or access_code not in users:
-        return False, "? Invalid access code"
+        return False, "Invalid access code"
 
     subj_key = subject.strip().lower()
     submissions = get_submissions()
@@ -305,7 +305,7 @@ def can_take_test(access_code: str, subject: str):
         allowed_subjects[subj_key] = False
         retakes[access_code] = allowed_subjects
         set_retakes(retakes)
-    return True, "? Allowed to take test"
+    return True, " Allowed to take test"
 
 def save_submission(access_code: str, subject: str, score: float, answers: dict):
     data = _load_unified_data()
@@ -432,6 +432,7 @@ def calculate_score(questions, answers):
     detailed = []
     for i, q in enumerate(questions):
         user_ans = answers[i] if i < len(answers) and answers[i] else "No Answer"
+
         correct_ans = q["answer"]
         correct = user_ans.strip().lower() == correct_ans.strip().lower()
         if correct:
@@ -455,7 +456,7 @@ def handle_uploaded_questions(file, class_name, subject_name):
         try:
             questions = json.loads(content)
         except json.JSONDecodeError as e:
-            st.error(f"? Invalid JSON format: {e}")
+            st.error(f" Invalid JSON format: {e}")
             st.info("Make sure your file uses double quotes and is valid JSON.")
             return False
 
@@ -463,7 +464,7 @@ def handle_uploaded_questions(file, class_name, subject_name):
             questions = questions["questions"]
 
         if not isinstance(questions, list):
-            st.error("? Uploaded file must be a JSON list or contain a 'questions' key with a list.")
+            st.error(" Uploaded file must be a JSON list or contain a 'questions' key with a list.")
             return False
 
         valid = [
@@ -471,15 +472,15 @@ def handle_uploaded_questions(file, class_name, subject_name):
             if isinstance(q, dict) and all(k in q for k in ("question", "options", "answer"))
         ]
         if not valid:
-            st.error("? No valid questions found in file.")
+            st.error("No valid questions found in file.")
             return False
 
         set_questions(class_name, subject_name, valid)
-        st.success(f"? Uploaded {len(valid)} questions for {class_name} - {subject_name}")
+        st.success(f" Uploaded {len(valid)} questions for {class_name} - {subject_name}")
         return True
 
     except Exception as e:
-        st.error(f"? Error handling uploaded file: {e}")
+        st.error(f" Error handling uploaded file: {e}")
         return False
 
 
