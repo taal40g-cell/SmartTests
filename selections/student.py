@@ -70,7 +70,7 @@ def run_student_mode():
         st.markdown("<div style='font-size:16px; font-weight:600;'>Enter logins:</div>", unsafe_allow_html=True)
         access_code = st.text_input(
             label="Logins",
-            placeholder="eg: code given by Admin",
+            placeholder="eg: code issued by Admin",
             key="access_code_input",
             label_visibility="collapsed"
         )
