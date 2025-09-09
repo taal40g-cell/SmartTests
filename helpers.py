@@ -300,7 +300,7 @@ def can_take_test(access_code: str, subject: str):
     allowed_subjects = retakes.get(access_code, {})
 
     if subj_key in submitted_subjects and not allowed_subjects.get(subj_key, False):
-        return False, f"? Already submitted {subject}. Retake not allowed."
+        return False, f"Already submitted {subject}. Retake not allowed."
     if allowed_subjects.get(subj_key, False):
         allowed_subjects[subj_key] = False
         retakes[access_code] = allowed_subjects

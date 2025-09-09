@@ -140,7 +140,7 @@ def run_student_mode():
 
     subject_options = subjects_list.get(student.get('class', '').strip().lower().replace(" ", ""), [])
     if not subject_options:
-        st.info("No subjects found for your class.")
+        st.info(" Good Luck  👍👍👍 ")
         return
 
     st.markdown('<div class="small-input">', unsafe_allow_html=True)
