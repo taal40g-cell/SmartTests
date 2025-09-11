@@ -50,7 +50,7 @@ def run_student_mode(): # ✅ Ensures we always have correct Streamlit reference
         """
         <marquee behavior="scroll" direction="left" scrollamount="5"
             style="color: #fff; background-color: #2E86C1; padding: 8px; border-radius: 8px; font-weight: bold;">
-            🚀 New feature: Retakes are only enabled by Admins! 🎯 | 📢 Remember to submit your test before time runs out ⏳
+            🚀 Warning: Retakes are only enabled by Admins! 🎯 | 📢 Remember to submit your test before time runs out ⏳
         </marquee>
         """,
         unsafe_allow_html=True
