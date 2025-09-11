@@ -34,18 +34,25 @@ def _save_unified_data(data):
     with open(UNIFIED_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
+def _hash_password(password: str) -> str:
+    """Return a SHA256 hash of the password."""
+    return hashlib.sha256(password.encode()).hexdigest()
 
-# =====================================================================
-# USERS
-# =====================================================================
-def get_users():
-    return _load_unified_data().get("users", {})
-
-def set_users(users):
+def ensure_super_admin():
     data = _load_unified_data()
-    data["users"] = users
-    _save_unified_data(data)
+    data.setdefault("admins", {})
+    if "Admin" not in data["admins"]:
+        data["admins"]["Admin"] = {
+            "password": _hash_password("admin"),  # default password
+            "role": "superadmin"
+        }
+        _save_unified_data(data)
 
+
+# =====================================================================
+# CALL AT STARTUP
+# =====================================================================
+ensure_super_admin()
 
 # =====================================================================
 # RETAKES
@@ -112,39 +119,188 @@ def set_admin_config(config):
     _save_unified_data(data)
 
 def require_admin_login():
-    if "admin_logged_in" not in st.session_state:
-        st.session_state.admin_logged_in = False
+    data = _load_unified_data()
+    admins = data.get("admins", {})
 
-    if not st.session_state.admin_logged_in:
-        config = get_admin_config()
-        st.subheader(" Admin Login")
-        username = st.text_input("Username", key="admin_username_input")
-        password = st.text_input("Password", type="password", key="admin_password_input")
+    # Check if already logged in
+    if st.session_state.get("admin_logged_in", False):
+        return True
+
+    st.subheader("🔑 Admin Login")
+    username = st.text_input("Username", key="admin_username_input")
+    password = st.text_input("Password", type="password", key="admin_password_input")
+
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
         if st.button("Login"):
-            if username == config["admin_username"] and password == config["admin_password"]:
-                st.session_state.admin_logged_in = True
-                st.success(" Login successful")
-                st.rerun()
+            normalized = username.strip().lower()
+            # Create a case-insensitive lookup mapping
+            admins_lower = {k.lower(): (k, v) for k, v in admins.items()}
+
+            if normalized in admins_lower:
+                original_key, admin_data = admins_lower[normalized]
+
+                if _verify_password(password, admin_data["password"]):
+                    # ✅ Store the correct original key (case preserved)
+                    st.session_state.admin_username = original_key
+                    st.session_state.admin_logged_in = True
+                    st.session_state.admin_role = admin_data["role"]
+                    st.success(f"✅ Logged in as {original_key} ({admin_data['role']})")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid username or password")
             else:
-                st.error(" Invalid username or password")
+                st.error("❌ Invalid username or password")
+
+    # Only allow password reset for super_admin
+    with col2:
+        if st.button("Reset Password (Super Admin Only)"):
+            st.session_state.show_reset_pw = True  # toggle UI
+
+    if st.session_state.get("show_reset_pw", False):
+        st.info("🔐 Super Admin Password Reset")
+        super_admin = st.text_input("Super Admin Username", key="super_admin_user")
+        super_pass = st.text_input("Super Admin Password", type="password", key="super_admin_pass")
+
+        if st.button("Authenticate Super Admin"):
+            super_admin_norm = super_admin.strip().lower()
+            admins_lower = {k.lower(): (k, v) for k, v in admins.items()}
+
+            if super_admin_norm in admins_lower:
+                _, sa_data = admins_lower[super_admin_norm]
+                if sa_data["role"] == "super_admin" and _verify_password(super_pass, sa_data["password"]):
+                    st.session_state.super_admin_authenticated = True
+                    st.success("✅ Super Admin authenticated! You can now reset any admin password.")
+                else:
+                    st.error("❌ Invalid super admin credentials")
+            else:
+                st.error("❌ Invalid super admin credentials")
+
+        if st.session_state.get("super_admin_authenticated", False):
+            reset_user = st.text_input("Username to Reset", key="reset_target_user")
+            new_password = st.text_input("New Password", type="password", key="reset_new_pw")
+            if st.button("Confirm Reset"):
+                reset_user_norm = reset_user.strip().lower()
+                admins_lower = {k.lower(): (k, v) for k, v in admins.items()}
+
+                if reset_user_norm in admins_lower:
+                    original_key, _ = admins_lower[reset_user_norm]
+                    data["admins"][original_key]["password"] = _hash_password(new_password)
+                    _save_unified_data(data)
+                    st.success(f"✅ Password for {original_key} reset successfully!")
+                    st.session_state.show_reset_pw = False
+                    st.session_state.super_admin_authenticated = False
+                else:
+                    st.error("❌ User not found")
+
+    return False
+
+
+def change_admin_password(username, new_password):
+    data = _load_unified_data()
+    if "admins" not in data:
+        st.error("⚠️ No admin data found.")
         return False
+    if username not in data["admins"]:
+        st.error(f"⚠️ Admin '{username}' not found.")
+        return False
+
+    data["admins"][username]["password"] = _hash_password(new_password)
+    _save_unified_data(data)
+    st.success(f"✅ Password for {username} updated successfully.")
     return True
 
+
+def admin_management_ui():
+    """UI for managing admins - visible only to super_admins."""
+    data = _load_unified_data()
+    admins = data.get("admins", {})
+
+    if st.session_state.get("admin_role") != "super_admin":
+        st.warning("⚠️ Only Super Admins can access this section.")
+        return
+
+    st.subheader("👑 Super Admin Panel - Manage Admins")
+
+    # --- Show all admins ---
+    st.write("### Current Admins")
+    st.table([{"Username": u, "Role": a["role"]} for u, a in admins.items()])
+
+    st.divider()
+
+    # --- Add Admin Section ---
+    st.write("### ➕ Add New Admin / Moderator")
+    new_user = st.text_input("New Username", key="new_admin_user")
+    new_pass = st.text_input("New Password", type="password", key="new_admin_pass")
+    new_role = st.selectbox("Role", ["admin", "moderator", "super_admin"], key="new_admin_role")
+
+    if st.button("Create Admin"):
+        if new_user and new_pass:
+            ok, msg = add_admin(new_user, new_pass, new_role, st.session_state.admin_username)
+            if ok:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+        else:
+            st.warning("⚠️ Username and password cannot be empty")
+
+    st.divider()
+
+    # --- Reset Password Section ---
+    st.write("### 🔑 Reset Admin Password")
+    reset_user = st.selectbox("Select Admin to Reset", list(admins.keys()), key="reset_user_select")
+    new_pw = st.text_input("New Password", type="password", key="reset_user_pw")
+    if st.button("Reset Password"):
+        if reset_user:
+            data["admins"][reset_user]["password"] = _hash_password(new_pw)
+            _save_unified_data(data)
+            log_admin_action(st.session_state.admin_username, f"Reset password for {reset_user}")
+            st.success(f"✅ Password for {reset_user} reset successfully!")
+            st.rerun()
+
+    st.divider()
+
+    # --- Remove Admin Section ---
+    st.write("### ❌ Remove Admin")
+    remove_user = st.selectbox("Select Admin to Remove", list(admins.keys()), key="remove_admin_select")
+    if st.button("Remove Admin"):
+        if remove_user:
+            if remove_user == st.session_state.admin_username:
+                st.error("❌ You cannot remove yourself while logged in!")
+            else:
+                ok, msg = remove_admin(remove_user, st.session_state.admin_username)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+
 def change_admin_password_ui():
-    st.subheader(" Change Admin Password")
-    config = get_admin_config()
+    st.subheader("🔑 Change Admin Password")
+    data = _load_unified_data()
+    admins = data.get("admins", {})
+    current_user = st.session_state.get("admin_username", "")
+    if current_user not in admins:
+        st.error("⚠️ Not logged in as a valid admin.")
+        return
+
     current_password = st.text_input("Current Password", type="password")
     new_password = st.text_input("New Password", type="password")
     confirm_password = st.text_input("Confirm New Password", type="password")
+
     if st.button("Update Password"):
-        if current_password != config.get("password", ""):
-            st.error("Current password is incorrect")
+        if not _verify_password(current_password, admins[current_user]["password"]):
+            st.error("❌ Current password is incorrect")
         elif new_password != confirm_password:
-            st.error(" Passwords do not match")
+            st.error("❌ Passwords do not match")
         else:
-            config["password"] = new_password
-            set_admin_config(config)
-            st.success(" Password updated successfully")
+            admins[current_user]["password"] = _hash_password(new_password)
+            data["admins"] = admins
+            _save_unified_data(data)
+            st.success("✅ Password updated successfully")
 
 # =====================================================================
 # NEW MULTI-ADMIN SYSTEM
@@ -152,8 +308,33 @@ def change_admin_password_ui():
 # Supports multiple admins with hashed passwords and logs
 # Uses `admins` and `admin_logs` in unified_data.json
 
+
 def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
+with open("unified_data.json", "r") as f:
+    data = json.load(f)
+
+# 👇 Change "Admin" to your main admin username
+username = "Admin"
+new_password = "1234"  # 👈 your chosen new password
+if "admins" not in data:
+    data["admins"] = {}
+
+if username not in data["admins"]:
+    data["admins"][username] = {"password": _hash_password(new_password), "role": "superadmin"}
+else:
+    data["admins"][username]["password"] = _hash_password(new_password)
+
+_save_unified_data(data)
+
+with open("unified_data.json", "w") as f:
+    json.dump(data, f, indent=4)
+
+
+def _verify_password(password: str, hashed_password: str) -> bool:
+    """Compare a raw password with the stored hashed password."""
+    return _hash_password(password) == hashed_password
 
 
 def add_admin(username: str, password: str, role: str = "admin", actor: str = "system"):
@@ -192,6 +373,7 @@ def authenticate_admin(username: str, password: str):
     if admin["password"] != _hash_password(password):
         return False, "❌ Invalid password"
     return True, admin["role"]
+
 
 
 def log_admin_action(admin: str, action: str):
@@ -267,6 +449,21 @@ def generate_access_slips(users):
 
 
 # =====================================================================
+# USERS API
+# =====================================================================
+
+def get_users():
+    """Return all users from unified storage as a dict."""
+    data = _load_unified_data()
+    return data.get("users", {})
+
+def set_users(users: dict):
+    """Replace users in unified storage with the given dict."""
+    data = _load_unified_data()
+    data["users"] = users
+    _save_unified_data(data)
+
+# =====================================================================
 # TEST LOGIC & RESET
 # =====================================================================
 def reset_test(access_code: str = None):
@@ -300,7 +497,7 @@ def can_take_test(access_code: str, subject: str):
     allowed_subjects = retakes.get(access_code, {})
 
     if subj_key in submitted_subjects and not allowed_subjects.get(subj_key, False):
-        return False, f"Already submitted {subject}. Retake not allowed."
+        return False, f"Already submitted {subject}. Retake not allowed.❌"
     if allowed_subjects.get(subj_key, False):
         allowed_subjects[subj_key] = False
         retakes[access_code] = allowed_subjects

@@ -95,10 +95,10 @@ def run_student_mode(): # ✅ Ensures we always have correct Streamlit reference
                 student["access_code"] = access_code.strip()
                 st.session_state.logged_in = True
                 st.session_state.student = student
-                st.success(f"Welcome, {student['name']} — Class {student['class']}")
+                st.success(f"Welcome, {student['name']} — Class {student['class']} ")
                 st.rerun()
             else:
-                st.error("Invalid login code.")
+                st.error("Invalid login code.❌")
             return
 
     # =================================================================

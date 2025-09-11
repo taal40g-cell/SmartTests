@@ -1,17 +1,26 @@
-from helpers import generate_access_slips
+import json, os, hashlib
 
-# Sample users
-test_users = [
-    {"access_code": "abcd1234", "name": "John Doe", "class": "JHS1", "can_retake": True},
-    {"access_code": "efgh5678", "name": "Jane Smith", "class": "JHS2", "can_retake": False},
-]
+UNIFIED_FILE = "unified_data.json"
 
-# Generate access slips with QR codes
-zip_buffer = generate_access_slips(test_users)
+def _hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-# Save ZIP to file so you can open it
-with open("TestAccessSlips.zip", "wb") as f:
-    f.write(zip_buffer.getbuffer())
+def _load_unified_data():
+    if not os.path.exists(UNIFIED_FILE):
+        return {"admins": {}}
+    with open(UNIFIED_FILE, "r") as f:
+        return json.load(f)
 
-print("[OK] Test access slips generated in TestAccessSlips.zip")
+def _save_unified_data(data):
+    with open(UNIFIED_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
+data = _load_unified_data()
+data.setdefault("admins", {})
+data["admins"]["Admin"] = {
+    "password": _hash_password("1234"),
+    "role": "superadmin"
+}
+_save_unified_data(data)
+print("✅ Admin password forcibly reset to 1234")
+print(f"🔑 New hash: {_hash_password('1234')}")

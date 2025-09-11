@@ -3,12 +3,6 @@ from ui import set_background
 from selections.student import run_student_mode
 from selections.admin import run_admin_mode
 import json
-
-# --- Load admin configuration ---
-# --- Clear cached data/resources on every run ---
-st.cache_data.clear()
-st.cache_resource.clear()
-
 # --- Session state defaults ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -18,7 +12,10 @@ if "menu_selection" not in st.session_state:
     st.session_state.menu_selection = "Student Mode"
 if "trigger_refresh" not in st.session_state:
     st.session_state.trigger_refresh = False
-
+if "admin_username" not in st.session_state:  # 🟢 important!
+    st.session_state.admin_username = ""
+if "admin_logged_in" not in st.session_state:  # 🟢 good to add too
+    st.session_state.admin_logged_in = False
 
 # --- Results page ---
 def results_page():

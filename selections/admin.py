@@ -33,30 +33,60 @@ SUBJECTS = [
     "English", "Math", "Science", "History", "Geography",
     "Physics", "Chemistry", "Biology", "ICT", "Economics"
 ]
-
 # =====================================================================
-# Admin Mode
+# Admin Mode (Role-Aware)
 # =====================================================================
 def run_admin_mode():
-    """Main Admin Panel UI (Multi-Admin Enabled)."""
+    """Main Admin Panel UI (Multi-Admin Enabled + Role-Based Tabs)."""
     if not require_admin_login():
         return
 
-    st.sidebar.title("⚙️ Admin Panel")
-    selected_tab = st.sidebar.radio("Choose Action", [
-        "➕ Add User",
-        "📥 Bulk Add Students",
-        "👥 Manage Students",
-        "🛡️ Manage Admins",
-        "🔑 Change Password",
-        "📤 Upload Questions",
-        "🗑️ Delete Questions & Duration",
-        "🏆 View Leaderboard",
-        "🔄 Allow Retake",
-        "🖨️ Generate Access Slips",
-        "♻️ Reset Tests",
-        "🚪 Logout"
-    ])
+    # Load admins + current user
+    data = _load_unified_data()
+    admins = data.get("admins", {})
+    current_user = st.session_state.get("admin_username", "")
+    current_role = admins.get(current_user, {}).get("role", "admin")  # fallback to admin
+
+    # --- Define tabs by role ---
+    all_tabs = {
+        "super_admin": [
+            "➕ Add User",
+            "📥 Bulk Add Students",
+            "👥 Manage Students",
+            "🛡️ Manage Admins",  # super_admin only
+            "🔑 Change Password",
+            "📤 Upload Questions",
+            "🗑️ Delete Questions & Duration",
+            "🏆 View Leaderboard",
+            "🔄 Allow Retake",
+            "🖨️ Generate Access Slips",
+            "♻️ Reset Tests",  # super_admin only
+            "🚪 Logout"
+        ],
+        "admin": [
+            "➕ Add User",
+            "📥 Bulk Add Students",
+            "👥 Manage Students",
+            "🔑 Change Password",
+            "📤 Upload Questions",
+            "🗑️ Delete Questions & Duration",
+            "🏆 View Leaderboard",
+            "🔄 Allow Retake",
+            "🖨️ Generate Access Slips",
+            "🚪 Logout"
+        ],
+        "moderator": [
+            "🏆 View Leaderboard",
+            "🚪 Logout"
+        ]
+    }
+
+    # Get correct tab list
+    available_tabs = all_tabs.get(current_role, all_tabs["admin"])
+
+    # Sidebar UI
+    st.sidebar.title(f"⚙️ Admin Panel ({current_user} – {current_role})")
+    selected_tab = st.sidebar.radio("Choose Action", available_tabs)
 
     st.title("🛠️ Admin Dashboard")
 
@@ -94,7 +124,6 @@ def run_admin_mode():
                 else:
                     users_dict, new_students = get_users(), []
                     existing_codes = set(users_dict.keys())
-
                     for _, row in df.iterrows():
                         name, class_name = str(row["name"]).strip(), str(row["class"]).strip()
                         code = generate_access_code(name, existing_codes)
@@ -107,7 +136,6 @@ def run_admin_mode():
                             "submitted": False,
                         }
                         new_students.append({"Access Code": code, "Name": name, "Class": class_name})
-
                     set_users(users_dict)
                     st.success(f"✅ {len(new_students)} students added.")
                     st.table(pd.DataFrame(new_students))
@@ -128,29 +156,25 @@ def run_admin_mode():
                                "students.csv", "text/csv")
 
     # -----------------------------
-    # Manage Admins
+    # Manage Admins (SUPER ONLY)
     # -----------------------------
-    elif selected_tab == "🛡️ Manage Admins":
+    elif selected_tab == "🛡️ Manage Admins" and current_role == "super_admin":
         st.subheader("Admin Accounts")
-
         # Add
         st.markdown("#### ➕ Add Admin")
         new_user = st.text_input("Username")
         new_pass = st.text_input("Password", type="password")
         role = st.selectbox("Role", ["admin", "moderator"])
         if st.button("Add Admin"):
-            ok, msg = add_admin(new_user, new_pass, role, st.session_state.admin_username)
+            ok, msg = add_admin(new_user, new_pass, role, current_user)
             st.success(msg) if ok else st.error(msg)
-
         # Remove
         st.markdown("#### ➖ Remove Admin")
-        data = _load_unified_data()
         admins = list(data.get("admins", {}).keys())
         to_remove = st.selectbox("Select Admin", admins) if admins else None
         if to_remove and st.button("Remove Admin"):
-            ok, msg = remove_admin(to_remove, st.session_state.admin_username)
+            ok, msg = remove_admin(to_remove, current_user)
             st.success(msg) if ok else st.error(msg)
-
         # Logs
         st.markdown("#### 📜 Logs")
         logs = data.get("admin_logs", [])
@@ -190,7 +214,6 @@ def run_admin_mode():
         if st.button("Delete Questions"):
             delete_question_file(cls, sub)
             st.success("Questions deleted.")
-
         config = get_admin_config()
         duration = st.slider("Test Duration (minutes)", 5, 120, config.get("duration", 30))
         if st.button("Save Duration"):
@@ -235,9 +258,9 @@ def run_admin_mode():
             st.download_button("⬇️ Download ZIP", buffer, "AccessSlips.zip")
 
     # -----------------------------
-    # Reset Tests
+    # Reset Tests (SUPER ONLY)
     # -----------------------------
-    elif selected_tab == "♻️ Reset Tests":
+    elif selected_tab == "♻️ Reset Tests" and current_role == "super_admin":
         if st.button("Reset All Tests"):
             reset_test()
             st.success("✅ Tests reset.")
@@ -248,4 +271,29 @@ def run_admin_mode():
     elif selected_tab == "🚪 Logout":
         st.session_state["admin_logged_in"] = False
         st.success("Logged out.")
+        st.rerun()
+
+    # -----------------------------
+    # Refresh Admin Panel (NEW)
+    # -----------------------------
+    st.divider()
+    st.subheader("⚡ Refresh Admin Panel")
+
+    if st.button("🔄 Refresh Admin UI", key="refresh_admin_ui"):
+        # ✅ Clear only admin-related session state
+        admin_keys = [
+            "show_reset_pw",
+            "super_admin_authenticated",
+            "reset_target_user",
+            "reset_new_pw",
+            "new_admin_user",
+            "new_admin_pass",
+            "new_admin_role",
+            "remove_admin_select",
+            "reset_user_select",
+            "reset_user_pw"
+        ]
+        for k in admin_keys:
+            st.session_state.pop(k, None)
+        st.success("✅ Admin panel has been refreshed. All fields reset.")
         st.rerun()

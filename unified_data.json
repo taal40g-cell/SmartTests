@@ -1846,6 +1846,48 @@
             "can_retake": true,
             "submitted": false,
             "retake_subjects": {}
+        },
+        "05RV4O": {
+            "access_code": "05RV4O",
+            "name": "John Doe",
+            "class": "JHS1",
+            "can_retake": true,
+            "submitted": false
+        },
+        "REGPIL": {
+            "access_code": "REGPIL",
+            "name": "Mary Smith",
+            "class": "JHS1",
+            "can_retake": true,
+            "submitted": false
+        },
+        "VISBYA": {
+            "access_code": "VISBYA",
+            "name": "Kofi Mensah",
+            "class": "JHS2",
+            "can_retake": true,
+            "submitted": false
+        },
+        "AGY0OP": {
+            "access_code": "AGY0OP",
+            "name": "Abena Owusu",
+            "class": "JHS2",
+            "can_retake": true,
+            "submitted": false
+        },
+        "ALN74X": {
+            "access_code": "ALN74X",
+            "name": "Michael Johnson",
+            "class": "JHS3",
+            "can_retake": true,
+            "submitted": false
+        },
+        "O5F0D7": {
+            "access_code": "O5F0D7",
+            "name": "Linda Brown",
+            "class": "JHS3",
+            "can_retake": true,
+            "submitted": false
         }
     },
     "submissions": [
@@ -1872,12 +1914,45 @@
             "subject": "Chemistry",
             "timestamp": "2025-09-07 02:11:34",
             "allowed_retake": false
+        },
+        {
+            "access_code": "MNPART",
+            "subject": "Physics",
+            "timestamp": "2025-09-10 06:29:08",
+            "allowed_retake": false
         }
     ],
     "retakes": {
         "MNPART": {
-            "english": false
+            "english": false,
+            "chemistry": true
         }
     },
-    "leaderboard": []
+    "leaderboard": [],
+    "admins": {
+        "Teacher": {
+            "password": "0252fa3e9d9c8c2c1cbd742a0ac409dc817c43f5ef23d6c36137f988e64055f7",
+            "role": "moderator"
+        },
+        "Abubakar": {
+            "password": "9ed142a0915c2d7e1b764effbb9f2b6a5911faa760f97d09d93ca527713f6fee",
+            "role": "moderator"
+        },
+        "Admin": {
+            "password": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
+            "role": "superadmin"
+        }
+    },
+    "admin_logs": [
+        {
+            "admin": "",
+            "action": "Created admin Teacher with role moderator",
+            "timestamp": "2025-09-10 06:51:47"
+        },
+        {
+            "admin": "",
+            "action": "Created admin Abubakar with role moderator",
+            "timestamp": "2025-09-10 06:56:31"
+        }
+    ]
 }
