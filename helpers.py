@@ -43,9 +43,10 @@ def ensure_super_admin():
     data.setdefault("admins", {})
     if "Admin" not in data["admins"]:
         data["admins"]["Admin"] = {
-            "password": _hash_password("admin"),  # default password
-            "role": "superadmin"
+            "password": _hash_password("admin"),
+            "role": "super_admin"
         }
+
         _save_unified_data(data)
 
 
@@ -447,6 +448,16 @@ def generate_access_slips(users):
     zip_buffer.seek(0)
     return zip_buffer
 
+def generate_student_id(users_dict: dict) -> str:
+    existing_ids = [u.get("student_id") for u in users_dict.values() if "student_id" in u]
+    numbers = []
+    for sid in existing_ids:
+        try:
+            numbers.append(int(sid.replace("STU", "")))
+        except (ValueError, AttributeError):
+            continue
+    next_number = max(numbers) + 1 if numbers else 1
+    return f"STU{next_number:04d}"
 
 # =====================================================================
 # USERS API
