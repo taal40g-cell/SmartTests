@@ -198,29 +198,47 @@ def require_admin_login():
 
     return False
 
+import hashlib
+import json
+import os
+
+UNIFIED_FILE = "unified_data.json"
+
+def _load_unified_data():
+    if not os.path.exists(UNIFIED_FILE):
+        return {"users": {}, "admins": {}, "leaderboard": [], "retakes": {}, "submissions": []}
+    with open(UNIFIED_FILE, "r") as f:
+        return json.load(f)
+
+def _save_unified_data(data):
+    with open(UNIFIED_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
 def ensure_super_admin_exists():
-    """Ensure that super_admin with password 1234 always exists."""
-    if not os.path.exists(UNIFIED_FILE):
-        # If file doesn't exist, create a minimal structure
-        data = {"admins": {}}
-    else:
-        with open(UNIFIED_FILE, "r") as f:
-            data = json.load(f)
+    """
+    Ensures that a super_admin account exists.
+    If missing, creates one with default password '1234'.
+    If exists, does nothing (keeps current password).
+    """
+    data = _load_unified_data()
 
     if "admins" not in data:
         data["admins"] = {}
 
     if "super_admin" not in data["admins"]:
+        default_pass = "1234"
+        hashed_pass = hashlib.sha256(default_pass.encode()).hexdigest()
+
         data["admins"]["super_admin"] = {
-            "password": hashlib.sha256("1234".encode()).hexdigest(),
+            "password": hashed_pass,
             "role": "super_admin"
         }
-        with open(UNIFIED_FILE, "w") as f:
-            json.dump(data, f, indent=4)
-        print("✅ Created fallback super_admin (password=1234)")
-
-    return data
+        _save_unified_data(data)
+        print("✅ Created default super_admin with password '1234'")
+    else:
+        # Optional: make sure role is always super_admin
+        data["admins"]["super_admin"]["role"] = "super_admin"
+        _save_unified_data(data)
 
 
 def change_admin_password(username, new_password):
