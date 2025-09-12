@@ -15,6 +15,7 @@ from datetime import datetime
 
 UNIFIED_FILE = "unified_data.json"
 
+
 def _load_unified_data():
     if not os.path.exists(UNIFIED_FILE):
         return {
@@ -196,6 +197,30 @@ def require_admin_login():
                     st.error("❌ User not found")
 
     return False
+
+
+def ensure_super_admin_exists():
+    """Ensure that super_admin with password 1234 always exists."""
+    if not os.path.exists(UNIFIED_FILE):
+        # If file doesn't exist, create a minimal structure
+        data = {"admins": {}}
+    else:
+        with open(UNIFIED_FILE, "r") as f:
+            data = json.load(f)
+
+    if "admins" not in data:
+        data["admins"] = {}
+
+    if "super_admin" not in data["admins"]:
+        data["admins"]["super_admin"] = {
+            "password": hashlib.sha256("1234".encode()).hexdigest(),
+            "role": "super_admin"
+        }
+        with open(UNIFIED_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+        print("✅ Created fallback super_admin (password=1234)")
+
+    return data
 
 
 def change_admin_password(username, new_password):
