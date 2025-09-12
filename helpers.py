@@ -241,6 +241,35 @@ def ensure_super_admin_exists():
         _save_unified_data(data)
 
 
+def upload_replace_unified_json_ui():
+    """UI for super admin to upload and replace unified_data.json."""
+    st.subheader("📤 Replace Unified Data File")
+
+    uploaded_file = st.file_uploader("Upload a new unified_data.json", type=["json"], key="upload_unified_json")
+    if uploaded_file:
+        try:
+            new_data = json.load(uploaded_file)
+
+            # Validate structure (optional, but safer)
+            if not isinstance(new_data, dict) or "admins" not in new_data:
+                st.error("❌ Invalid JSON file. Missing 'admins' key.")
+                return
+
+            # Backup old file first
+            if os.path.exists(UNIFIED_FILE):
+                os.rename(UNIFIED_FILE, UNIFIED_FILE + ".bak")
+                st.info("💾 Backup created: unified_data.json.bak")
+
+            # Save new file
+            with open(UNIFIED_FILE, "w") as f:
+                json.dump(new_data, f, indent=4)
+
+            st.success("✅ unified_data.json replaced successfully. Refresh page to see changes.")
+            st.balloons()
+        except json.JSONDecodeError:
+            st.error("❌ Failed to decode JSON. Please upload a valid JSON file.")
+
+
 def change_admin_password(username, new_password):
     data = _load_unified_data()
     if "admins" not in data:
