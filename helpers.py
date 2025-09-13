@@ -39,22 +39,39 @@ def _hash_password(password: str) -> str:
     """Return a SHA256 hash of the password."""
     return hashlib.sha256(password.encode()).hexdigest()
 
-def ensure_super_admin():
+
+def ensure_super_admin_exists():
+    """
+    Ensures that a super_admin account exists.
+    If missing, creates one with default password '1234'.
+    If exists, does nothing (keeps current password).
+    """
     data = _load_unified_data()
-    data.setdefault("admins", {})
-    if "Admin" not in data["admins"]:
-        data["admins"]["Admin"] = {
-            "password": _hash_password("admin"),
+
+    if "admins" not in data:
+        data["admins"] = {}
+
+    if "super_admin" not in data["admins"]:
+        default_pass = "1234"
+        hashed_pass = hashlib.sha256(default_pass.encode()).hexdigest()
+
+        data["admins"]["super_admin"] = {
+            "password": hashed_pass,
             "role": "super_admin"
         }
-
         _save_unified_data(data)
+        print("✅ Created default super_admin with password '1234'")
+    else:
+        # Optional: make sure role is always super_admin
+        data["admins"]["super_admin"]["role"] = "super_admin"
+        _save_unified_data(data)
+
 
 
 # =====================================================================
 # CALL AT STARTUP
 # =====================================================================
-ensure_super_admin()
+ensure_super_admin_exists()
 
 # =====================================================================
 # RETAKES
@@ -198,48 +215,6 @@ def require_admin_login():
 
     return False
 
-import hashlib
-import json
-import os
-
-UNIFIED_FILE = "unified_data.json"
-
-def _load_unified_data():
-    if not os.path.exists(UNIFIED_FILE):
-        return {"users": {}, "admins": {}, "leaderboard": [], "retakes": {}, "submissions": []}
-    with open(UNIFIED_FILE, "r") as f:
-        return json.load(f)
-
-def _save_unified_data(data):
-    with open(UNIFIED_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-def ensure_super_admin_exists():
-    """
-    Ensures that a super_admin account exists.
-    If missing, creates one with default password '1234'.
-    If exists, does nothing (keeps current password).
-    """
-    data = _load_unified_data()
-
-    if "admins" not in data:
-        data["admins"] = {}
-
-    if "super_admin" not in data["admins"]:
-        default_pass = "1234"
-        hashed_pass = hashlib.sha256(default_pass.encode()).hexdigest()
-
-        data["admins"]["super_admin"] = {
-            "password": hashed_pass,
-            "role": "super_admin"
-        }
-        _save_unified_data(data)
-        print("✅ Created default super_admin with password '1234'")
-    else:
-        # Optional: make sure role is always super_admin
-        data["admins"]["super_admin"]["role"] = "super_admin"
-        _save_unified_data(data)
-
 
 def upload_replace_unified_json_ui():
     """UI for super admin to upload and replace unified_data.json."""
@@ -356,10 +331,12 @@ def change_admin_password_ui():
     data = _load_unified_data()
     admins = data.get("admins", {})
     current_user = st.session_state.get("admin_username", "")
+
     if current_user not in admins:
         st.error("⚠️ Not logged in as a valid admin.")
         return
 
+    # Normal password change flow
     current_password = st.text_input("Current Password", type="password")
     new_password = st.text_input("New Password", type="password")
     confirm_password = st.text_input("Confirm New Password", type="password")
@@ -375,34 +352,30 @@ def change_admin_password_ui():
             _save_unified_data(data)
             st.success("✅ Password updated successfully")
 
+    # 🔒 Extra protection for super_admin reset (hidden by default)
+    if current_user == "super_admin":
+        with st.expander("🛡 Emergency Super Admin Password Reset", expanded=False):
+            st.info("⚠️ This will reset the super_admin password without checking the old one.")
+            reset_pass = st.text_input("Enter NEW password for super_admin", type="password", key="reset_pass")
+            confirm_reset = st.text_input("Confirm NEW password", type="password", key="confirm_reset")
+
+            if st.button("🔑 Force Reset Password"):
+                if not reset_pass:
+                    st.error("Password cannot be empty.")
+                elif reset_pass != confirm_reset:
+                    st.error("Passwords do not match.")
+                else:
+                    admins["super_admin"]["password"] = _hash_password(reset_pass)
+                    data["admins"] = admins
+                    _save_unified_data(data)
+                    st.success("✅ Super Admin password force-reset successfully.")
+
 # =====================================================================
 # NEW MULTI-ADMIN SYSTEM
 # =====================================================================
 # Supports multiple admins with hashed passwords and logs
 # Uses `admins` and `admin_logs` in unified_data.json
 
-
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
-
-with open("unified_data.json", "r") as f:
-    data = json.load(f)
-
-# 👇 Change "Admin" to your main admin username
-username = "Admin"
-new_password = "1234"  # 👈 your chosen new password
-if "admins" not in data:
-    data["admins"] = {}
-
-if username not in data["admins"]:
-    data["admins"][username] = {"password": _hash_password(new_password), "role": "superadmin"}
-else:
-    data["admins"][username]["password"] = _hash_password(new_password)
-
-_save_unified_data(data)
-
-with open("unified_data.json", "w") as f:
-    json.dump(data, f, indent=4)
 
 
 def _verify_password(password: str, hashed_password: str) -> bool:
@@ -830,27 +803,27 @@ def load_all_questions():
     return all_questions
 
 
-def require_multi_admin_login():
-    """Multi-admin login UI. Returns True if logged in."""
-    if "admin_logged_in" not in st.session_state:
-        st.session_state.admin_logged_in = False
-        st.session_state.admin_username = None
-        st.session_state.admin_role = None
+def debug_print_admins():
+    """Debug: Print all admins and their roles (without passwords)."""
+    if not os.path.exists(UNIFIED_FILE):
+        print("⚠️ No unified_data.json file found.")
+        return
 
-    if not st.session_state.admin_logged_in:
-        st.subheader("🔑 Admin Login")
-        username = st.text_input("Username", key="multi_admin_username")
-        password = st.text_input("Password", type="password", key="multi_admin_password")
+    try:
+        with open(UNIFIED_FILE, "r") as f:
+            data = json.load(f)
 
-        if st.button("Login"):
-            success, result = authenticate_admin(username.strip(), password)
-            if success:
-                st.session_state.admin_logged_in = True
-                st.session_state.admin_username = username.strip()
-                st.session_state.admin_role = result  # role: admin/moderator, etc.
-                st.success(f"✅ Login successful as '{username.strip()}' ({result})")
-                st.rerun()
-            else:
-                st.error(result)
-        return False
-    return True
+        admins = data.get("admins", {})
+        print("\n🔎 DEBUG: Current Admins in unified_data.json")
+        print("=============================================")
+        if not admins:
+            print("❌ No admins found in file.")
+            return
+
+        for name, info in admins.items():
+            role = info.get("role", "unknown")
+            print(f"👤 {name}  |  Role: {role}")
+
+        print("=============================================\n")
+    except json.JSONDecodeError:
+        print("❌ Could not decode unified_data.json (invalid JSON).")

@@ -1,14 +1,13 @@
-# reset_admin.py
 from helpers import _load_unified_data, _save_unified_data, _hash_password
 
-NEW_PASSWORD = "1234"  # Change to any password you want
+def create_default_super_admin():
+    data = _load_unified_data()
+    data.setdefault("admins", {})
+    data["admins"]["super_admin"] = {
+        "password": _hash_password("1234"),
+        "role": "super_admin"
+    }
+    _save_unified_data(data)
+    print("✅ Default super_admin created (username: super_admin, password: 1234)")
 
-data = _load_unified_data()
-data.setdefault("admins", {})
-data["admins"]["Admin"] = {
-    "password": _hash_password(NEW_PASSWORD),
-    "role": "superadmin"
-}
-_save_unified_data(data)
-
-
+create_default_super_admin()

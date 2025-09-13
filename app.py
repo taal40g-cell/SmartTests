@@ -2,6 +2,8 @@ import streamlit as st
 from ui import set_background
 from selections.student import run_student_mode
 from selections.admin import run_admin_mode
+from helpers import  debug_print_admins
+
 import json
 # --- Session state defaults ---
 if "logged_in" not in st.session_state:

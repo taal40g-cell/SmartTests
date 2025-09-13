@@ -1823,21 +1823,24 @@
             "name": "Abubakar Taal",
             "class": "JHS1",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU3568"
         },
         "2UYP7N": {
             "access_code": "2UYP7N",
             "name": "Abubakar Taal",
             "class": "JHS1",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU4214"
         },
         "OQH3DS": {
             "access_code": "OQH3DS",
             "name": "Abubakar Muniru",
             "class": "JHS1",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU0853"
         },
         "MNPART": {
             "access_code": "MNPART",
@@ -1845,47 +1848,86 @@
             "class": "JHS1",
             "can_retake": true,
             "submitted": false,
-            "retake_subjects": {}
+            "retake_subjects": {},
+            "student_id": "STU0144"
         },
         "05RV4O": {
             "access_code": "05RV4O",
             "name": "John Doe",
             "class": "JHS1",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU0669"
         },
         "REGPIL": {
             "access_code": "REGPIL",
             "name": "Mary Smith",
             "class": "JHS1",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU4421"
         },
         "VISBYA": {
             "access_code": "VISBYA",
             "name": "Kofi Mensah",
             "class": "JHS2",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU0586"
         },
         "AGY0OP": {
             "access_code": "AGY0OP",
             "name": "Abena Owusu",
             "class": "JHS2",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU6526"
         },
         "ALN74X": {
             "access_code": "ALN74X",
             "name": "Michael Johnson",
             "class": "JHS3",
             "can_retake": true,
-            "submitted": false
+            "submitted": false,
+            "student_id": "STU0059"
         },
         "O5F0D7": {
             "access_code": "O5F0D7",
             "name": "Linda Brown",
             "class": "JHS3",
+            "can_retake": true,
+            "submitted": false,
+            "student_id": "STU2131"
+        },
+        "NAV7J0": {
+            "access_code": "NAV7J0",
+            "name": "Abubakar Muniru",
+            "class": "JHS1",
+            "can_retake": true,
+            "submitted": false,
+            "student_id": "STU6317"
+        },
+        "5SPDUG": {
+            "student_id": "STU0012",
+            "access_code": "5SPDUG",
+            "name": "Abubakar Muniru",
+            "class": "JHS1",
+            "can_retake": true,
+            "submitted": false
+        },
+        "LH8FPE": {
+            "student_id": "STU6527",
+            "access_code": "LH8FPE",
+            "name": "usif Sunday ",
+            "class": "JHS1",
+            "can_retake": true,
+            "submitted": false
+        },
+        "6XBB8H": {
+            "student_id": "STU6528",
+            "access_code": "6XBB8H",
+            "name": "usif Sunday ",
+            "class": "JHS1",
             "can_retake": true,
             "submitted": false
         }
@@ -1930,17 +1972,21 @@
     },
     "leaderboard": [],
     "admins": {
-        "Teacher": {
-            "password": "0252fa3e9d9c8c2c1cbd742a0ac409dc817c43f5ef23d6c36137f988e64055f7",
-            "role": "moderator"
+        "super_admin": {
+            "password": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
+            "role": "super_admin"
         },
-        "Abubakar": {
+        "zakia muniru": {
+            "password": "fccb96c9b03c554b03aac47ae3b76de361468d0463dbe87a0b8194251b9dd7dc",
+            "role": "admin"
+        },
+        "Taal": {
             "password": "9ed142a0915c2d7e1b764effbb9f2b6a5911faa760f97d09d93ca527713f6fee",
-            "role": "moderator"
+            "role": "admin"
         },
         "Admin": {
-            "password": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
-            "role": "superadmin"
+            "password": "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918",
+            "role": "super_admin"
         }
     },
     "admin_logs": [
@@ -1953,6 +1999,56 @@
             "admin": "",
             "action": "Created admin Abubakar with role moderator",
             "timestamp": "2025-09-10 06:56:31"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Created admin zakia Muniru with role admin",
+            "timestamp": "2025-09-11 20:24:22"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Removed admin Teacher",
+            "timestamp": "2025-09-11 20:30:13"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Removed admin Abubakar",
+            "timestamp": "2025-09-11 20:30:23"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Removed admin Admin",
+            "timestamp": "2025-09-11 20:30:24"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Removed admin zakia Muniru",
+            "timestamp": "2025-09-11 20:30:26"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Created admin zakia Muniru with role admin",
+            "timestamp": "2025-09-11 20:31:22"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Removed admin zakia Muniru",
+            "timestamp": "2025-09-11 20:48:43"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Removed admin Admin",
+            "timestamp": "2025-09-11 20:48:45"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Created admin zakia muniru with role admin",
+            "timestamp": "2025-09-11 20:49:23"
+        },
+        {
+            "admin": "super_admin",
+            "action": "Created admin Taal with role admin",
+            "timestamp": "2025-09-13 04:01:46"
         }
     ]
 }

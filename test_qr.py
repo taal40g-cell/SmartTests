@@ -1,26 +1,32 @@
-import json, os, hashlib
+# upgrade_students.py
+from helpers import _load_unified_data, _save_unified_data
+import random
+import string
 
-UNIFIED_FILE = "unified_data.json"
+def generate_student_id(existing_ids):
+    while True:
+        student_id = "STU" + "".join(random.choices(string.digits, k=4))
+        if student_id not in existing_ids:
+            return student_id
 
-def _hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def upgrade_students():
+    data = _load_unified_data()
+    users = data.get("users", {})
+    existing_ids = {u.get("student_id") for u in users.values() if u.get("student_id")}
+    updated = False
 
-def _load_unified_data():
-    if not os.path.exists(UNIFIED_FILE):
-        return {"admins": {}}
-    with open(UNIFIED_FILE, "r") as f:
-        return json.load(f)
+    for user in users.values():
+        if "student_id" not in user:
+            user["student_id"] = generate_student_id(existing_ids)
+            existing_ids.add(user["student_id"])
+            updated = True
 
-def _save_unified_data(data):
-    with open(UNIFIED_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    if updated:
+        data["users"] = users
+        _save_unified_data(data)
+        print(f"✅ Added student_id to {len(users)} users.")
+    else:
+        print("ℹ️ All users already have student_id. No changes made.")
 
-data = _load_unified_data()
-data.setdefault("admins", {})
-data["admins"]["Admin"] = {
-    "password": _hash_password("1234"),
-    "role": "superadmin"
-}
-_save_unified_data(data)
-print("✅ Admin password forcibly reset to 1234")
-print(f"🔑 New hash: {_hash_password('1234')}")
+if __name__ == "__main__":
+    upgrade_students()
