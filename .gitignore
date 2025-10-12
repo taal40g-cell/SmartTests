@@ -1,0 +1,60 @@
+# ==============================
+# Python cache and bytecode
+# ==============================
+__pycache__/
+*.pyc
+*.pyo
+
+# ==============================
+# Environment files (secrets)
+# ==============================
+*.env
+admin_config.json
+
+# ==============================
+# System files
+# ==============================
+.DS_Store
+Thumbs.db
+
+# ==============================
+# Logs, temporary files
+# ==============================
+*.log
+*.txt
+
+# ==============================
+# Virtual environment
+# ==============================
+venv/
+
+# ==============================
+# Result PDFs (not tracked)
+# ==============================
+result_pdfs/
+results/
+
+# ==============================
+# QR images (optional)
+# ==============================
+qr_*.png
+
+# ==============================
+# JSON/CSV: ignore all except questions/
+# ==============================
+*.json
+*.csv
+!questions/*.json
+!questions/*.csv
+
+# ==============================
+# Optional: Database files
+# ==============================
+*.db
+smarttest.db
+
+# ==============================
+# Excel backups (ignore)
+# ==============================
+*.xlsx
+.venv/
