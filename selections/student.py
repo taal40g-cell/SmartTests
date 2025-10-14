@@ -268,6 +268,8 @@ def run_student_mode():
                 random.shuffle(questions)
                 for q in questions:
                     opts = q.get("options", [])
+
+                    # Handle options if they come as string (e.g. "A, B, C")
                     if isinstance(opts, str):
                         try:
                             opts = json.loads(opts)
@@ -277,11 +279,23 @@ def run_student_mode():
                             opts = [o.strip() for o in opts.split(",") if o.strip()]
                     elif not isinstance(opts, list):
                         opts = [str(opts)]
+
+                    # ✅ Ensure exactly 4 options, then add "Default"
+                    while len(opts) < 4:
+                        opts.append(f"Option {len(opts) + 1}")
+                    opts = opts[:4]  # limit to 4 max
+                    opts.append("Default")
+
+                    # ✅ Assign correct answer
                     correct_text = str(q.get("answer", "")).strip()
                     q["correct_answer_text"] = correct_text
+
+                    # Shuffle options and update answer index
                     random.shuffle(opts)
                     q["options"] = opts
                     q["answer_index"] = opts.index(correct_text) if correct_text in opts else -1
+
+                    # Remove 'answer' key for test integrity
                     q.pop("answer", None)
 
                 try:

@@ -6,29 +6,6 @@ from db_helpers import ensure_super_admin_exists
 # ==============================
 # Step 1: Create tables
 # ==============================
-try:
-    with engine.begin() as conn:
-        Base.metadata.create_all(bind=conn)
-    st.success("✅ All database tables created successfully!")
-except Exception as e:
-    st.error(f"❌ Failed to create tables: {e}")
-
-# ==============================
-# Step 2: Ensure super admin
-# ==============================
-try:
-    ensure_super_admin_exists()
-    st.info("👑 Super admin checked or created successfully.")
-except Exception as e:
-    st.error(f"⚠️ Error while ensuring super admin: {e}")
-
-# ==============================
-# Step 3: Test DB connection
-# ==============================
-if test_db_connection():
-    st.success("✅ Database connected successfully.")
-else:
-    st.error("❌ Database connection failed. Check DATABASE_URL or network settings.")
 
 # ==============================
 # Step 4: Import UI components

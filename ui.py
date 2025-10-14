@@ -7,6 +7,9 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from datetime import datetime
 from io import BytesIO
+import pandas as pd
+import io
+
 
 # -----------------------------
 # Cached function to read & encode image
@@ -236,7 +239,6 @@ def generate_pdf(name, class_name, subject, correct, total, percent, details, lo
 
 
 
-
 def is_archived(q):
     """Safely return True/False if a question is archived."""
     if isinstance(q, dict):
@@ -244,3 +246,106 @@ def is_archived(q):
     return getattr(q, "archived", False)
 
 
+
+
+# ==============================
+# Constants
+# ==============================
+CLASSES = ["JHS1", "JHS2", "JHS3", "SHS1", "SHS2", "SHS3"]
+
+
+# ==============================
+# 🧠 Subject Management Helpers
+# ==============================
+SUBJECTS_FILE = "subjects.json"
+DEFAULT_SUBJECTS = [
+    "English", "Mathematics", "Science", "History", "Geography",
+    "Physics", "Chemistry", "Biology", "ICT", "Economics"
+]
+
+def load_subjects():
+    """
+    Load subjects from subjects.json.
+    If the file doesn't exist or is corrupt, create it with defaults.
+    """
+    try:
+        if not os.path.exists(SUBJECTS_FILE):
+            with open(SUBJECTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_SUBJECTS, f, indent=2)
+            return list(DEFAULT_SUBJECTS)
+        with open(SUBJECTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return sorted(list(set([str(s).strip() for s in data if str(s).strip()])))
+            return list(DEFAULT_SUBJECTS)
+    except Exception:
+        return list(DEFAULT_SUBJECTS)
+
+def save_subjects(subjects: list):
+    """
+    Save subjects list to file (clean + unique).
+    """
+    cleaned = sorted(list(set([str(s).strip() for s in subjects if str(s).strip()])))
+    with open(SUBJECTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(cleaned, f, indent=2)
+
+def manage_subjects_ui():
+    """
+    Streamlit UI for adding/deleting subjects.
+    """
+    st.subheader("📚 Manage Subjects")
+
+    subjects = load_subjects()
+
+    # ---- Add new subject ----
+    with st.expander("➕ Add New Subject", expanded=True):
+        new_sub = st.text_input("Enter new subject name:")
+        if st.button("Add Subject"):
+            if not new_sub.strip():
+                st.warning("Please enter a subject name.")
+            elif new_sub.strip() in subjects:
+                st.info(f"'{new_sub}' already exists.")
+            else:
+                subjects.append(new_sub.strip())
+                save_subjects(subjects)
+                st.success(f"✅ Added subject: {new_sub}")
+                st.rerun()
+
+    # ---- Existing subjects ----
+    st.write("### 📋 Existing Subjects")
+    if not subjects:
+        st.info("No subjects found.")
+        return
+
+    for subj in subjects:
+        col1, col2 = st.columns([4, 1])
+        col1.write(f"📘 **{subj}**")
+        if col2.button("❌ Delete", key=f"del_{subj}"):
+            subjects = [s for s in subjects if s != subj]
+            save_subjects(subjects)
+            st.success(f"🗑️ Deleted '{subj}' successfully.")
+            st.rerun()
+
+    st.info(f"Total subjects: {len(subjects)}")
+
+# ==============================
+# 🧩 Other Small Helpers
+# ==============================
+CLASSES = ["JHS1", "JHS2", "JHS3", "SHS1", "SHS2", "SHS3"]
+
+def df_download_button(df: pd.DataFrame, label: str, filename: str):
+    """Download CSV button helper"""
+    if df is None or df.empty:
+        st.info("No data available for download.")
+        return
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(label, csv, filename, "text/csv")
+
+def excel_download_buffer(dfs: dict, filename="smarttest_backup.xlsx"):
+    """Return Excel file buffer from dict of dataframes."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        for sheet, df in dfs.items():
+            df.to_excel(writer, index=False, sheet_name=sheet[:31])
+    buffer.seek(0)
+    return buffer.getvalue()

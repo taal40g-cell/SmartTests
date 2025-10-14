@@ -166,20 +166,20 @@ def update_admin_password(username: str, new_password: str) -> bool:
 
 
 # ==============================
-# Ensure Super Admin Exists
+# Ensure Super Admin Exists (Fixed)
 # ==============================
 def ensure_super_admin_exists():
     """
     Ensure a default super_admin exists.
-    If missing, creates super_admin with password "1234".
-    If present, ensures role is correct and password is valid.
+    - If missing, creates super_admin with password "1234".
+    - If present, only ensures correct role (does NOT overwrite password).
     """
     db = get_session()
     try:
         admin = db.query(Admin).filter_by(username="super_admin").first()
-        default_pass = hash_password("1234")
 
         if not admin:
+            default_pass = hash_password("1234")
             db.add(
                 Admin(
                     username="super_admin",
@@ -190,25 +190,20 @@ def ensure_super_admin_exists():
             db.commit()
             print("✅ Created default super_admin (username=super_admin, password=1234)")
         else:
-            updated = False
-            # Ensure correct role
+            # Only fix the role if it's wrong — no password reset
             if admin.role != "super_admin":
                 admin.role = "super_admin"
-                updated = True
-            # Ensure default password works
-            if not verify_password("1234", admin.password_hash):
-                admin.password_hash = default_pass
-                updated = True
-            if updated:
                 db.commit()
-                print("🔄 Updated super_admin role or password as needed")
+                print("🔄 Fixed super_admin role (password unchanged).")
+    except Exception as e:
+        db.rollback()
+        print(f"Error ensuring super_admin: {e}")
     finally:
         db.close()
 
 
-# Run on module load
+# ✅ Run on module load
 ensure_super_admin_exists()
-
 
 # ==============================
 # Admin Login UI (Streamlit)
@@ -588,44 +583,66 @@ def validate_question(q: Dict[str, Any]) -> bool:
     return True
 
 
+
+@st.cache_data(ttl=60)
 def handle_uploaded_questions(class_name, subject, valid_questions):
+    from sqlalchemy import and_
     db = get_session()
     try:
         class_name_lower = class_name.strip().lower()
         subject_lower = subject.strip().lower()
 
+        # 🧹 STEP 1: Delete all old questions for this class and subject
         deleted_count = (
             db.query(Question)
             .filter(
-                Question.class_name == class_name_lower,
-                Question.subject == subject_lower
+                and_(
+                    Question.class_name == class_name_lower,
+                    Question.subject == subject_lower
+                )
             )
             .delete(synchronize_session=False)
         )
+        db.commit()  # commit deletion immediately
 
-        new_records = [
-            Question(
-                class_name=class_name_lower,
-                subject=subject_lower,
-                question_text=q["question"].strip(),
-                options=json.dumps([opt.strip() for opt in q["options"]]),
-                answer=q["answer"].strip(),
+        # 🆕 STEP 2: Insert new questions
+        new_records = []
+        for q in valid_questions:
+            question_text = q.get("question", "").strip()
+            options = q.get("options", [])
+            answer = q.get("answer", "").strip()
+
+            clean_options = [opt.strip() for opt in options if isinstance(opt, str) and opt.strip()]
+            if len(clean_options) < 2:
+                print(f"⚠️ Skipping question '{question_text}' — not enough options.")
+                continue
+
+            new_records.append(
+                Question(
+                    class_name=class_name_lower,
+                    subject=subject_lower,
+                    question_text=question_text,
+                    options=json.dumps(clean_options),
+                    answer=answer
+                )
             )
-            for q in valid_questions
-        ]
 
         db.add_all(new_records)
         db.commit()
 
-        return {"success": True, "inserted": len(new_records), "deleted": deleted_count}
+        inserted_count = len(new_records)
+        print(f"✅ Upload successful: Deleted {deleted_count}, Inserted {inserted_count}")
+
+        return {"success": True, "inserted": inserted_count, "deleted": deleted_count}
 
     except Exception as e:
-        print("Upload error:", e)
+        print("❌ Upload error:", e)
         db.rollback()
         return {"success": False, "error": str(e)}
 
     finally:
         db.close()
+
 
 
 
