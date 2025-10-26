@@ -1,0 +1,58 @@
+[
+  {
+    "access_code": "john6392",
+    "name": "John Doe",
+    "class_name": "JHS1",
+    "can_retake": false,
+    "submitted": false
+  },
+  {
+    "access_code": "mary6895",
+    "name": "Mary Smith",
+    "class_name": "JHS1",
+    "can_retake": false,
+    "submitted": false
+  },
+  {
+    "access_code": "kofi6895",
+    "name": "Kofi Mensah",
+    "class_name": "JHS2",
+    "can_retake": false,
+    "submitted": false
+  },
+  {
+    "access_code": "aben6895",
+    "name": "Abena Owusu",
+    "class_name": "JHS2",
+    "can_retake": false,
+    "submitted": false
+  },
+  {
+    "access_code": "mich6895",
+    "name": "Michael Johnson",
+    "class_name": "JHS3",
+    "can_retake": false,
+    "submitted": false
+  },
+  {
+    "access_code": "lind7396",
+    "name": "Linda Brown",
+    "class_name": "JHS3",
+    "can_retake": false,
+    "submitted": false
+  },
+  {
+    "access_code": "nuru9631",
+    "name": "Nuru",
+    "class_name": "JHS1",
+    "can_retake": true,
+    "submitted": false
+  },
+  {
+    "access_code": "abub6301",
+    "name": "Abubakar Muniru",
+    "class_name": "JHS1",
+    "can_retake": true,
+    "submitted": false
+  }
+]
