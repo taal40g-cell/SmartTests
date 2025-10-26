@@ -2,13 +2,15 @@ import streamlit as st
 import os
 import base64
 import json
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfgen import canvas
-from datetime import datetime
-from io import BytesIO
 import pandas as pd
 import io
+from io import BytesIO
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Table, TableStyle
+from datetime import datetime
 
 
 # -----------------------------
@@ -22,48 +24,80 @@ def get_base64_image(file_path: str) -> str:
     with open(file_path, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
-
-# -----------------------------
-# Set Streamlit background
-# -----------------------------
-def set_background(file_path: str, force_reload: bool = False):
+def set_background(file_path: str = None, color: str = "#7abaa1", force_reload: bool = False):
     """
-    Sets a Streamlit app background using a local image.
+    Sets a Streamlit app background using either a local image or a solid/gradient color.
 
     Parameters:
-    - file_path: Path to the image file.
-    - force_reload: If True, clears the cached image to reload a new one.
+    - file_path: Optional path to the image file.
+    - color: Hex color to use if image is not provided or missing.
+    - force_reload: If True, clears cached image.
     """
-    if not os.path.exists(file_path):
-        st.error(f"Background file not found: {file_path}")
-        return
+    base64_image = None
 
-    # Force cache clear if requested
-    if force_reload:
+    if file_path and os.path.exists(file_path):
+        # Optionally clear cache
+        if force_reload:
+            try:
+                st.cache_data.clear()
+            except AttributeError:
+                pass
+
         try:
-            st.cache_data.clear()
-        except AttributeError:
-            pass  # Older Streamlit versions may not support clear()
+            base64_image = get_base64_image(file_path)
+        except Exception as e:
+            st.warning(f"⚠️ Failed to load background image: {e}. Using color background instead.")
+            base64_image = None
+    else:
+        base64_image = None
 
-    try:
-        base64_image = get_base64_image(file_path)
-    except Exception as e:
-        st.error(f"Failed to load background image: {e}")
-        return
-
-    st.markdown(
-        f"""
-        <style>
+    # Apply either image or color background
+    if base64_image:
+        st.markdown(
+            f"""
+            <style>
             .stApp {{
                 background-image: url("data:image/png;base64,{base64_image}");
                 background-size: cover;
                 background-repeat: no-repeat;
                 background-attachment: fixed;
             }}
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+            section[data-testid="stSidebar"] {{
+                background-color: rgba(122, 186, 161, 0.9) !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            f"""
+            <style>
+            .stApp {{
+                background: linear-gradient(135deg, {color}, #9ed3b8);
+                color: #222 !important;
+            }}
+            section[data-testid="stSidebar"] {{
+                background-color: {color} !important;
+                background-image: linear-gradient(135deg, {color}, #94c7ad);
+                color: #fff !important;
+                border-right: 2px solid rgba(255, 255, 255, 0.1);
+            }}
+            .stSidebar button {{
+                background: linear-gradient(145deg, #8dcbb3, #6fae96) !important;
+                color: #fff !important;
+                border: none !important;
+                border-radius: 10px !important;
+                transition: 0.3s ease-in-out;
+            }}
+            .stSidebar button:hover {{
+                transform: translateY(-2px);
+                background: linear-gradient(145deg, #6fae96, #8dcbb3) !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
 
 
 
@@ -149,82 +183,104 @@ def render_test(questions, subject):
 
 
 
-def generate_pdf(name, class_name, subject, correct, total, percent, details, logo_path=None):
+
+def generate_pdf(name, class_name, subject, correct, total, percent, details,
+                 school_name=None, school_id=None, logo_path=None):
+    """
+    Generate a neat test result PDF with school info, logo, and result breakdown in a table.
+    """
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
 
-    # --- Logo on the Left ---
+    # --- Top Header Section ---
+    y_top = height - 60
+
+    # School logo
     if logo_path:
         try:
             logo = ImageReader(logo_path)
-            c.drawImage(logo, 60, height - 100, width=80, height=60, preserveAspectRatio=True, mask='auto')
+            c.drawImage(logo, 60, y_top - 40, width=80, height=60, preserveAspectRatio=True, mask='auto')
         except Exception:
-            c.setFont("Helvetica-Oblique", 10)
-            c.drawString(60, height - 80, "[Logo not found]")
+            c.setFont("Helvetica-Oblique", 9)
+            c.drawString(60, y_top - 20, "[Logo not found]")
     else:
-        c.setFont("Helvetica-Oblique", 10)
-        c.drawString(60, height - 80, "[LOGO PLACEHOLDER]")
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(60, y_top - 20, "[LOGO PLACEHOLDER]")
 
-    # --- Title ---
-    c.setFont("Helvetica-Bold", 18)
-    c.drawCentredString(width / 2 + 60, height - 70, "SMART TEST RESULT")
-
-    # --- Date & Time ---
+    # School Name and Info
+    c.setFont("Helvetica-Bold", 14)
+    c.drawCentredString(width / 2 + 40, y_top, school_name or "SMART TEST SCHOOL")
     c.setFont("Helvetica", 10)
-    c.drawRightString(width - 60, height - 80, datetime.now().strftime("Generated: %Y-%m-%d %H:%M:%S"))
+    if school_id:
+        c.drawCentredString(width / 2 + 40, y_top - 15, f"School ID: {school_id}")
+
+    # Title
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(width / 2 + 40, y_top - 40, "STUDENT TEST RESULT")
+
+    # Date/Time
+    c.setFont("Helvetica", 9)
+    c.drawRightString(width - 60, y_top - 20, datetime.now().strftime("Generated: %Y-%m-%d %H:%M:%S"))
 
     # --- Student Info ---
-    c.setFont("Helvetica", 12)
-    y = height - 140
-    c.drawString(70, y, f"Student: {name}")
-    y -= 20
+    y = y_top - 80
+    c.setFont("Helvetica", 11)
+    c.drawString(70, y, f"Student Name: {name}")
+    y -= 18
     c.drawString(70, y, f"Class: {class_name}")
-    y -= 20
+    y -= 18
     c.drawString(70, y, f"Subject: {subject}")
-    y -= 20
+    y -= 18
     c.drawString(70, y, f"Score: {correct}/{total} ({percent:.2f}%)")
-    y -= 30
 
-    # --- Divider ---
+    # Divider Line
+    y -= 15
     c.setStrokeColorRGB(0.2, 0.6, 0.2)
     c.line(60, y, width - 60, y)
-    y -= 30
+    y -= 25
 
-    # --- Detailed Results ---
-    c.setFont("Helvetica-Bold", 13)
-    c.drawString(70, y, "Question Breakdown")
-    y -= 20
-    c.setFont("Helvetica", 10)
+    # --- Detailed Results in Table ---
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(70, y, "Question Breakdown:")
+    y -= 15
+
+    # Table headers and rows
+    data = [["#", "Question", "Your Answer", "Correct Answer", "Result"]]
 
     for i, d in enumerate(details, start=1):
-        question = d.get("question", "")
-        your_answer = d.get("your_answer", "No Answer")
-        correct_answer = d.get("correct_answer", "N/A")
+        question = d.get("question", "").strip()
+        your_answer = d.get("your_answer", "—")
+        correct_answer = d.get("correct_answer", "—")
         is_correct = d.get("is_correct", False)
+        short_q = (question[:65] + "...") if len(question) > 65 else question
+        result = "✔ Correct" if is_correct else "✘ Wrong"
+        data.append([str(i), short_q, your_answer, correct_answer, result])
 
-        qtext = f"Q{i}: {question[:80]}..." if len(question) > 80 else f"Q{i}: {question}"
+    # Table style
+    table = Table(data, colWidths=[30, 200, 100, 100, 70])
+    style = TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+    ])
+    table.setStyle(style)
 
-        # Question
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(70, y, qtext)
-        y -= 15
+    # Build table page by page
+    available_height = y - 100
+    table_height = len(data) * 18
+    if table_height > available_height:
+        # too long, split across pages
+        c.showPage()
+        y = height - 80
 
-        # Answers
-        c.setFont("Helvetica", 10)
-        c.drawString(90, y, f"Your Answer: {your_answer}")
-        y -= 15
-        c.drawString(90, y, f"Correct Answer: {correct_answer}")
-        y -= 15
-        c.setFillColorRGB(0, 0.6, 0) if is_correct else c.setFillColorRGB(1, 0, 0)
-        c.drawString(90, y, f"Result: {'✔ Correct' if is_correct else '✘ Wrong'}")
-        c.setFillColorRGB(0, 0, 0)
-        y -= 25
-
-        if y < 100:
-            c.showPage()
-            c.setFont("Helvetica", 10)
-            y = height - 100
+    table.wrapOn(c, width - 120, height)
+    table.drawOn(c, 60, y - (len(data) * 18))
 
     # --- Footer ---
     c.setFont("Helvetica-Oblique", 9)
@@ -236,7 +292,6 @@ def generate_pdf(name, class_name, subject, correct, total, percent, details, lo
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
-
 
 
 def is_archived(q):
@@ -263,75 +318,9 @@ DEFAULT_SUBJECTS = [
     "Physics", "Chemistry", "Biology", "ICT", "Economics"
 ]
 
-def load_subjects():
-    """
-    Load subjects from subjects.json.
-    If the file doesn't exist or is corrupt, create it with defaults.
-    """
-    try:
-        if not os.path.exists(SUBJECTS_FILE):
-            with open(SUBJECTS_FILE, "w", encoding="utf-8") as f:
-                json.dump(DEFAULT_SUBJECTS, f, indent=2)
-            return list(DEFAULT_SUBJECTS)
-        with open(SUBJECTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, list):
-                return sorted(list(set([str(s).strip() for s in data if str(s).strip()])))
-            return list(DEFAULT_SUBJECTS)
-    except Exception:
-        return list(DEFAULT_SUBJECTS)
-
-def save_subjects(subjects: list):
-    """
-    Save subjects list to file (clean + unique).
-    """
-    cleaned = sorted(list(set([str(s).strip() for s in subjects if str(s).strip()])))
-    with open(SUBJECTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(cleaned, f, indent=2)
-
-def manage_subjects_ui():
-    """
-    Streamlit UI for adding/deleting subjects.
-    """
-    st.subheader("📚 Manage Subjects")
-
-    subjects = load_subjects()
-
-    # ---- Add new subject ----
-    with st.expander("➕ Add New Subject", expanded=True):
-        new_sub = st.text_input("Enter new subject name:")
-        if st.button("Add Subject"):
-            if not new_sub.strip():
-                st.warning("Please enter a subject name.")
-            elif new_sub.strip() in subjects:
-                st.info(f"'{new_sub}' already exists.")
-            else:
-                subjects.append(new_sub.strip())
-                save_subjects(subjects)
-                st.success(f"✅ Added subject: {new_sub}")
-                st.rerun()
-
-    # ---- Existing subjects ----
-    st.write("### 📋 Existing Subjects")
-    if not subjects:
-        st.info("No subjects found.")
-        return
-
-    for subj in subjects:
-        col1, col2 = st.columns([4, 1])
-        col1.write(f"📘 **{subj}**")
-        if col2.button("❌ Delete", key=f"del_{subj}"):
-            subjects = [s for s in subjects if s != subj]
-            save_subjects(subjects)
-            st.success(f"🗑️ Deleted '{subj}' successfully.")
-            st.rerun()
-
-    st.info(f"Total subjects: {len(subjects)}")
-
 # ==============================
 # 🧩 Other Small Helpers
 # ==============================
-CLASSES = ["JHS1", "JHS2", "JHS3", "SHS1", "SHS2", "SHS3"]
 
 def df_download_button(df: pd.DataFrame, label: str, filename: str):
     """Download CSV button helper"""
@@ -349,3 +338,26 @@ def excel_download_buffer(dfs: dict, filename="smarttest_backup.xlsx"):
             df.to_excel(writer, index=False, sheet_name=sheet[:31])
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def load_classes():
+    """Load class list from file or return default list."""
+    file_path = "data/classes.json"
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return ["JHS 1", "JHS 2", "JHS 3"]
+
+
+def style_admin_headers():
+    st.markdown("""
+        <style>
+        /* Underline all h1/h2 headers in admin dashboard */
+        .stApp h1, .stApp h2, .stApp h3 {
+            text-decoration: underline;
+            text-decoration-color: #ff7e5a;  /* You can change this color */
+            text-underline-offset: 6px;       /* space between text and underline */
+            text-decoration-thickness: 2px;   /* thickness of the underline */
+        }
+        </style>
+    """, unsafe_allow_html=True)

@@ -6,9 +6,14 @@ from passlib.context import CryptContext
 from passlib.exc import UnknownHashError
 from sqlalchemy.orm import Session
 import json
-from typing import List, Dict, Any
+import random
+import string
+import uuid
+# db_helpers.py
 
-
+from models import StudentProgress,School,Subject,TestDuration
+from sqlalchemy.exc import SQLAlchemyError
+from typing import Optional, Dict, List, Any
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, JSON, func
 
 
@@ -32,7 +37,6 @@ from models import (
 # ==============================
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-
 # ==============================
 # Password Helpers
 # ==============================
@@ -53,19 +57,23 @@ def verify_password(password: str, hashed_password: str) -> bool:
 
 
 # ==============================
-# Admin CRUD
+# Admin CRUD (Multi-Tenant)
 # ==============================
-def set_admin(username: str, password: str, role: str = "admin") -> bool:
+def set_admin(username: str, password: str, role: str = "admin", school_id: int | None = None) -> bool:
     """
-    Create or update an admin.
+    Create or update an admin for a specific school.
     Always stores the password as a bcrypt hash.
+    school_id=None means super_admin.
     """
     db = get_session()
     try:
         username = username.strip()
         hashed_pw = hash_password(password)
 
-        admin = db.query(Admin).filter(Admin.username.ilike(username)).first()
+        admin = db.query(Admin).filter(
+            Admin.username.ilike(username),
+            Admin.school_id == school_id
+        ).first()
         if admin:
             admin.password_hash = hashed_pw
             admin.role = role
@@ -73,7 +81,8 @@ def set_admin(username: str, password: str, role: str = "admin") -> bool:
             admin = Admin(
                 username=username,
                 password_hash=hashed_pw,
-                role=role
+                role=role,
+                school_id=school_id
             )
             db.add(admin)
 
@@ -87,18 +96,26 @@ def set_admin(username: str, password: str, role: str = "admin") -> bool:
         db.close()
 
 
-def add_admin(username: str, password: str, role: str = "admin") -> bool:
+def add_admin(username: str, password: str, role: str = "admin", school_id: int | None = None) -> bool:
     """
-    Add a new admin (bcrypt).
-    Returns False if the username already exists.
+    Add a new admin (bcrypt) for a specific school.
+    Returns False if the username already exists in that school.
     """
     db = get_session()
     try:
-        if db.query(Admin).filter(Admin.username.ilike(username.strip())).first():
+        if db.query(Admin).filter(
+            Admin.username.ilike(username.strip()),
+            Admin.school_id == school_id
+        ).first():
             return False
 
         hashed_pw = hash_password(password)
-        db.add(Admin(username=username.strip(), password_hash=hashed_pw, role=role))
+        db.add(Admin(
+            username=username.strip(),
+            password_hash=hashed_pw,
+            role=role,
+            school_id=school_id
+        ))
         db.commit()
         return True
     except Exception as e:
@@ -109,49 +126,52 @@ def add_admin(username: str, password: str, role: str = "admin") -> bool:
         db.close()
 
 
-def get_admin(username: str) -> Admin | None:
-    """Retrieve an admin by username (case-insensitive)."""
+
+def get_all_admins(as_dict=False, school_id=None):
     db = get_session()
     try:
-        return db.query(Admin).filter(Admin.username.ilike(username.strip())).first()
-    finally:
-        db.close()
+        query = db.query(Admin)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        admins = query.all()
 
-
-def get_admins(as_dict: bool = False):
-    """
-    Get all admins.
-    If as_dict=True, returns {username: role}.
-    """
-    db = get_session()
-    try:
-        result = db.query(Admin).all()
         if as_dict:
-            return {a.username: a.role for a in result}
-        return result
+            return {a.username: a.role for a in admins}
+        return admins
     finally:
         db.close()
 
 
-def verify_admin(username: str, password: str) -> Admin | None:
+def verify_admin(username: str, password: str, school_id: int | None = None) -> Admin | None:
     """
-    Verify admin credentials.
+    Verify admin credentials for a specific school.
     Returns the Admin object on success, None on failure.
     """
-    admin = get_admin(username)
-    if admin and verify_password(password, admin.password_hash):
-        return admin
-    return None
+    db = get_session()
+    try:
+        admin = db.query(Admin).filter(
+            Admin.username.ilike(username.strip()),
+            Admin.school_id == school_id
+        ).first()
+
+        if admin and verify_password(password, admin.password_hash):
+            return admin
+        return None
+    finally:
+        db.close()
 
 
-def update_admin_password(username: str, new_password: str) -> bool:
+def update_admin_password(username: str, new_password: str, school_id: int | None = None) -> bool:
     """
-    Update an admin's password.
+    Update an admin's password for a specific school.
     Caller must pass a plain password; it will be hashed before saving.
     """
     db = get_session()
     try:
-        admin = db.query(Admin).filter(Admin.username.ilike(username.strip())).first()
+        admin = db.query(Admin).filter(
+            Admin.username.ilike(username.strip()),
+            Admin.school_id == school_id
+        ).first()
         if not admin:
             return False
         admin.password_hash = hash_password(new_password)
@@ -163,7 +183,6 @@ def update_admin_password(username: str, new_password: str) -> bool:
         return False
     finally:
         db.close()
-
 
 # ==============================
 # Ensure Super Admin Exists (Fixed)
@@ -204,92 +223,174 @@ def ensure_super_admin_exists():
 
 # ✅ Run on module load
 ensure_super_admin_exists()
-# ==============================
-# Admin Login UI (Streamlit)
-# ==============================
-def require_admin_login():
+# ===============================================
+# Admin Login (Multi-Tenant / Super Admin support)
+# ===============================================
+def require_school_context():
+    """
+    Ensure a valid school_id is available for admin operations.
+    Super Admins can bypass this (they can manage all schools).
+    """
+    import streamlit as st
+
+    role = st.session_state.get("admin_role")
+    school_id = (
+        st.session_state.get("school_id")
+        or st.session_state.get("admin_school_id")
+        or st.session_state.get("current_school_id")
+    )
+
+    # ✅ Allow super_admin even if no school_id is set
+    if role == "super_admin":
+        return school_id or 0  # placeholder id for universal access
+
+    # 🚫 Block normal admins if no school assigned
+    if not school_id:
+        st.error("❌ No school assigned. Please log in again or contact the super admin.")
+        st.stop()
+
+    return school_id
+
+# ===============================================
+# Admin Login (Multi-Tenant / Super Admin support)
+# ===============================================
+def require_admin_login(tenant_school_id: int | None = None):
     """
     Streamlit login flow for admins.
-    - Checks session state for existing login.
-    - Validates username/password.
-    - Allows super_admin to reset any password.
+    Supports:
+    - super_admin → full access to all schools
+    - school_admin → restricted to their assigned school
+    - tenant_school_id → optional filter for specific school/tenant
     """
-    # ✅ Already logged in
+
+    # -------------------------------------------------------
+    # ✅ EARLY EXIT — Already logged in
+    # -------------------------------------------------------
     if st.session_state.get("admin_logged_in", False):
+        # Show quick sidebar info
+        st.sidebar.success(
+            f"✅ Logged in as {st.session_state.admin_username} "
+            f"({st.session_state.admin_role})"
+        )
         return True
 
+    # -------------------------------------------------------
+    # Super Admin Password Reset (Inner Helper)
+    # -------------------------------------------------------
+    def show_super_admin_reset():
+        """Display Super Admin password reset flow."""
+        if st.session_state.get("show_reset_pw", False):
+            st.info("🔐 Super Admin Password Reset")
+
+            super_admin_user = st.text_input("Super Admin Username", key="super_admin_user")
+            super_admin_pass = st.text_input("Super Admin Password", type="password", key="super_admin_pass")
+
+            if st.button("Authenticate Super Admin"):
+                sa = get_all_admins(super_admin_user.strip())
+                if sa and sa.role == "super_admin" and verify_password(super_admin_pass, sa.password_hash):
+                    st.session_state.super_admin_authenticated = True
+                    st.success("✅ Super Admin authenticated! You can now reset admin passwords.")
+                else:
+                    st.error("❌ Invalid Super Admin credentials")
+
+            if st.session_state.get("super_admin_authenticated", False):
+                reset_username = st.text_input("Username to Reset", key="reset_target_user")
+                new_pw = st.text_input("New Password", type="password", key="reset_new_pw")
+
+                if st.button("Confirm Reset"):
+                    target = get_all_admins(reset_username.strip())
+                    if target:
+                        update_admin_password(reset_username.strip(), new_pw)
+                        st.success(f"✅ Password for '{reset_username}' reset successfully!")
+                        st.session_state.show_reset_pw = False
+                        st.session_state.super_admin_authenticated = False
+                    else:
+                        st.error("❌ User not found")
+
+    # -------------------------------------------------------
+    # Admin Login Form
+    # -------------------------------------------------------
     st.subheader("🔑 Admin Login")
 
-    username = st.text_input("Username", key="admin_username_input")
-    password = st.text_input("Password", type="password", key="admin_password_input")
-
     col1, col2 = st.columns([3, 1])
-
-    # --------------------------
-    # Standard Login
-    # --------------------------
     with col1:
-        if st.button("Login"):
-            admin = get_admin(username.strip())
-            if admin and verify_password(password, admin.password_hash):
-                # Save session state
-                st.session_state.admin_username = admin.username
-                st.session_state.admin_logged_in = True
-                st.session_state.admin_role = admin.role
-                st.success(f"✅ Logged in as {admin.username} ({admin.role})")
-                st.rerun()
-            else:
-                st.error("❌ Invalid username or password")
+        username = st.text_input("Username", key="admin_username_input")
+        password = st.text_input("Password", type="password", key="admin_password_input")
 
-    # --------------------------
-    # Super Admin Reset Option
-    # --------------------------
     with col2:
-        if st.button("Reset Password (Super Admin Only)"):
-            st.session_state.show_reset_pw = True
+        st.markdown("<br>", unsafe_allow_html=True)
+        login_button = st.button("🔐 Login", use_container_width=True)
+        reset_button = st.button("🔁 Reset", use_container_width=True)
 
-    if st.session_state.get("show_reset_pw", False):
-        st.info("🔐 Super Admin Password Reset")
+    # -------------------------------------------------------
+    # Login Button Action
+    # -------------------------------------------------------
+    if login_button:
+        db = get_session()
+        try:
+            query = db.query(Admin).filter(Admin.username.ilike(username.strip()))
 
-        super_admin = st.text_input("Super Admin Username", key="super_admin_user")
-        super_pass = st.text_input("Super Admin Password", type="password", key="super_admin_pass")
+            # Apply tenant restriction if provided
+            if tenant_school_id:
+                query = query.filter(
+                    (Admin.school_id == tenant_school_id) | (Admin.role == "super_admin")
+                )
 
-        if st.button("Authenticate Super Admin"):
-            sa = get_admin(super_admin.strip())
-            if sa and sa.role == "super_admin" and verify_password(super_pass, sa.password_hash):
-                st.session_state.super_admin_authenticated = True
-                st.success("✅ Super Admin authenticated! You can now reset any admin password.")
-            else:
-                st.error("❌ Invalid super admin credentials")
+            admin = query.first()
+            if not admin:
+                st.error("❌ Username not found or unauthorized for this school.")
+                return False
 
-        # --------------------------
-        # Password Reset Flow
-        # --------------------------
-        if st.session_state.get("super_admin_authenticated", False):
-            reset_user = st.text_input("Username to Reset", key="reset_target_user")
-            new_password = st.text_input("New Password", type="password", key="reset_new_pw")
+            if not verify_password(password, admin.password_hash):
+                st.error("❌ Invalid password.")
+                return False
 
-            if st.button("Confirm Reset"):
-                target = get_admin(reset_user.strip())
-                if target:
-                    update_admin_password(reset_user.strip(), new_password)
-                    st.success(f"✅ Password for {reset_user} reset successfully!")
-                    # Reset state
-                    st.session_state.show_reset_pw = False
-                    st.session_state.super_admin_authenticated = False
-                else:
-                    st.error("❌ User not found")
+            # ✅ Store session data properly before rerun
+            st.session_state.admin_logged_in = True
+            st.session_state.admin_username = admin.username
+            st.session_state.admin_role = admin.role
+            st.session_state.admin_school_id = admin.school_id
+            st.session_state.school_name = admin.school.name if admin.school else "Global"
+            st.session_state.school_id = admin.school_id
+            st.session_state.current_school_id = admin.school_id
+
+            # ✅ Unified admin dictionary for consistent downstream usage
+            st.session_state.admin = {
+                "username": admin.username,
+                "role": admin.role,
+                "school_id": admin.school_id,
+                "school_name": admin.school.name if admin.school else "Global"
+            }
+
+            # ✅ For super admin, allow global access
+            if admin.role == "super_admin":
+                st.session_state.current_school_id = None
+
+            st.sidebar.success(f"✅ Logged in as {admin.username} ({admin.role})")
+
+            # 🔁 Trigger a rerun with session state set
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"⚠️ Login error: {e}")
+        finally:
+            db.close()
+
+    # -------------------------------------------------------
+    # Password Reset Request
+    # -------------------------------------------------------
+    if reset_button:
+        st.session_state.show_reset_pw = True
+        st.info("🔑 Super Admin authentication required to reset passwords.")
+        show_super_admin_reset()
 
     return False
 
 # -----------------------------
 # Student Management
 # -----------------------------
-import random, string, uuid
-
-
-def generate_access_code(length=6, db=None):
-    """Generate a unique access code for students (short and user-friendly)."""
+def generate_access_code(length=6, db=None, school_id=None):
+    """Generate a unique access code for students (short and user-friendly) per school."""
     close_db = False
     if db is None:
         db = get_session()
@@ -297,29 +398,19 @@ def generate_access_code(length=6, db=None):
     try:
         while True:
             code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
-            if not db.query(Student).filter_by(access_code=code).first():
+            # Ensure uniqueness within the same school
+            query = db.query(Student).filter_by(access_code=code)
+            if school_id:
+                query = query.filter_by(school_id=school_id)
+            if not query.first():
                 return code
     finally:
         if close_db:
             db.close()
 
-# db_helpers.py
-from database import get_session
-from contextlib import contextmanager
 
-@contextmanager
-def db_session():
-    """Context manager for safely using database sessions."""
-    db = get_session()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-
-def generate_unique_id(db=None):
-    """Generate a unique internal ID for tracking students (UUID shortened)."""
+def generate_unique_id(db=None, school_id=None):
+    """Generate a unique internal ID for tracking students (UUID shortened) per school."""
     close_db = False
     if db is None:
         db = get_session()
@@ -327,158 +418,158 @@ def generate_unique_id(db=None):
     try:
         while True:
             unique_id = str(uuid.uuid4())[:8]
-            if not db.query(Student).filter_by(unique_id=unique_id).first():
+            query = db.query(Student).filter_by(unique_id=unique_id)
+            if school_id:
+                query = query.filter_by(school_id=school_id)
+            if not query.first():
                 return unique_id
     finally:
         if close_db:
             db.close()
 
 
-
-def add_student_db(name, class_name, db=None):
-    """
-    Adds a single student. If a db session is provided, it reuses it.
-    Otherwise, it opens and closes its own session.
-
-    Returns:
-        {
-            "id": int,
-            "unique_id": str,
-            "name": str,
-            "class_name": str,
-            "access_code": str,
-            "status": "new" | "reused"
-        }
-    """
-    own_session = False
+def add_student_db(name, class_name, school_id, db=None):
+    """Add a new student and associate with the correct school."""
+    close_db = False
     if db is None:
         db = get_session()
-        own_session = True
+        close_db = True
 
     try:
-        # Strip to avoid whitespace mismatches
-        name = name.strip()
-        class_name = class_name.strip()
+        # Generate unique codes/IDs using your helpers
+        access_code = generate_access_code(db=db, school_id=school_id)
+        unique_id = generate_unique_id(db=db, school_id=school_id)
 
-        # Check if student already exists (same name and class)
-        existing = db.query(Student).filter_by(name=name, class_name=class_name).first()
-        if existing:
-            return {
-                "id": existing.id,
-                "unique_id": existing.unique_id,
-                "name": existing.name,
-                "class_name": existing.class_name,
-                "access_code": existing.access_code,
-                "status": "reused",
-            }
-
-        # Generate new access code and unique_id
-        access_code = generate_access_code()
-        unique_id = uuid.uuid4().hex[:8]  # 8-char lowercase unique id (e.g., 'f2a1d9b3')
-
-        # Create and save new student
-        new_student = Student(
+        # ✅ Use the correct field name ('class_name')
+        student = Student(
             unique_id=unique_id,
-            name=name,
-            class_name=class_name,
+            name=name.strip(),
+            class_name=class_name,   # fixed from class_level → class_name
             access_code=access_code,
             can_retake=True,
             submitted=False,
+            school_id=school_id
         )
-        db.add(new_student)
-        db.commit()
-        db.refresh(new_student)
 
-        return {
-            "id": new_student.id,
-            "unique_id": new_student.unique_id,
-            "name": new_student.name,
-            "class_name": new_student.class_name,
-            "access_code": new_student.access_code,
-            "status": "new",
-        }
+        db.add(student)
+        db.commit()
+        db.refresh(student)
+        return student
 
     except Exception as e:
         db.rollback()
         raise e
+
     finally:
-        if own_session:
+        if close_db:
+            db.close()
+
+def bulk_add_students_db(students_list, school_id, db=None):
+    """Bulk add multiple students under the same school."""
+    close_db = False
+    if db is None:
+        db = get_session()
+        close_db = True
+
+    added_students = []
+    summary = {"new": 0, "reused": 0}
+
+    try:
+        for entry in students_list:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                raise ValueError(f"Invalid student entry format: {entry}")
+            name, class_name = entry
+            name, class_name = name.strip(), class_name.strip()
+
+            existing = (
+                db.query(Student)
+                .filter_by(name=name, class_name=class_name, school_id=school_id)
+                .first()
+            )
+
+            if existing:
+                added_students.append({
+                    "name": existing.name,
+                    "class_name": existing.class_name,
+                    "access_code": existing.access_code,
+                    "status": "reused"
+                })
+                summary["reused"] += 1
+                continue
+
+            access_code = generate_access_code(db=db, school_id=school_id)
+            unique_id = generate_unique_id(db=db, school_id=school_id)
+
+            student = Student(
+                unique_id=unique_id,
+                name=name,
+                class_name=class_name,
+                access_code=access_code,
+                can_retake=True,
+                submitted=False,
+                school_id=school_id
+            )
+            db.add(student)
+            db.flush()
+
+            added_students.append({
+                "name": student.name,
+                "class_name": student.class_name,
+                "access_code": student.access_code,
+                "unique_id": student.unique_id,
+                "status": "new"
+            })
+            summary["new"] += 1
+
+        db.commit()
+        return {"students": added_students, "summary": summary}
+
+    except Exception as e:
+        db.rollback()
+        raise e
+
+    finally:
+        if close_db:
             db.close()
 
 
-def bulk_add_students_db(student_list):
-    """
-    Adds multiple students in bulk.
-    Skips and reuses if student already exists.
-    student_list: list of tuples [(name, class_name), ...]
-
-    Returns:
-        {
-            "students": [...],
-            "summary": {"new": count_new, "reused": count_reused}
-        }
-    """
-    results = []
-    count_new, count_reused = 0, 0
-
-    db = get_session()
-    try:
-        for name, class_name in student_list:
-            student_data = add_student_db(name, class_name, db=db)
-            results.append(student_data)
-
-            if student_data["status"] == "new":
-                count_new += 1
-            else:
-                count_reused += 1
-
-        return {
-            "students": results,
-            "summary": {"new": count_new, "reused": count_reused},
-        }
-
-    finally:
-        db.close()
-
-
-def get_student_by_access_code_db(access_code):
-    """Fetch student ORM object by access code (case-insensitive)."""
+def get_student_by_access_code_db(access_code, school_id=None):
+    """Fetch student ORM object by access code (case-insensitive) and optional school."""
     clean_code = access_code.strip().upper()
     db = get_session()
     try:
-        student = (
-            db.query(Student)
-            .filter(func.upper(Student.access_code) == clean_code)
-            .first()
-        )
-        return student
+        query = db.query(Student).filter(func.upper(Student.access_code) == clean_code)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        return query.first()
     finally:
         db.close()
 
-    # =====================================
-    # Student Helpers
-    # =====================================
 
-
-
-def get_student_by_code(db: Session, access_code: str):
+def get_student_by_code(db: Session, access_code: str, school_id=None):
     """
     Fetch a student record by their unique access code.
     Returns None if not found.
     """
     try:
-        return db.query(Student).filter_by(access_code=access_code).first()
+        query = db.query(Student).filter_by(access_code=access_code)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        return query.first()
     except Exception as e:
         print(f"❌ Error fetching student by code: {e}")
         return None
 
 
-def update_student_submission_db(access_code):
-    """Mark student as submitted = True."""
+def update_student_submission_db(access_code, school_id=None):
+    """Mark student as submitted = True for a specific school."""
     db = get_session()
     try:
         code = normalize_code(access_code)
-        student = db.query(Student).filter(Student.access_code == code).first()
+        query = db.query(Student).filter(Student.access_code == code)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        student = query.first()
         if student:
             student.submitted = True
             db.commit()
@@ -486,24 +577,35 @@ def update_student_submission_db(access_code):
         db.close()
 
 
-def reset_student_retake_db(access_code):
-    """Reset student so they can retake (submitted = False)."""
+def reset_student_retake_db(access_code, school_id=None):
+    """Reset student so they can retake (submitted = False) for a specific school."""
     db = get_session()
     try:
         code = normalize_code(access_code)
-        student = db.query(Student).filter(Student.access_code == code).first()
+        query = db.query(Student).filter(Student.access_code == code)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        student = query.first()
         if student:
             student.submitted = False
             db.commit()
     finally:
         db.close()
 
-
-def get_users():
-    """Return all students as dict keyed by access code."""
+def get_users(school_id=None):
+    """
+    Return all students as a dict keyed by access_code.
+    - If school_id is provided → returns only that school’s students.
+    - Otherwise → returns all students (for super_admin).
+    """
     db = get_session()
     try:
-        students = db.query(Student).all()
+        query = db.query(Student)
+        if school_id is not None:
+            query = query.filter_by(school_id=school_id)
+
+        students = query.all()
+
         return {
             s.access_code.strip().upper(): {
                 "id": s.id,
@@ -511,19 +613,19 @@ def get_users():
                 "class_name": s.class_name,
                 "unique_id": s.unique_id,
                 "access_code": s.access_code.strip().upper(),
-                "submitted": bool(s.submitted)
+                "submitted": bool(s.submitted),
+                "school_id": s.school_id,
+                "can_retake": bool(s.can_retake),
             }
             for s in students
         }
+
     finally:
         db.close()
 
-# -----------------------------
-# Question Management
-# -----------------------------
 
-def add_question_db(class_name: str, subject: str, text: str, options: List[str], correct: str):
-    """Add a single question to the DB."""
+def add_question_db(class_name: str, subject: str, text: str, options: List[str], correct: str, school_id=None):
+    """Add a single question to the DB with optional school_id."""
     db = get_session()
     try:
         db.add(Question(
@@ -531,20 +633,23 @@ def add_question_db(class_name: str, subject: str, text: str, options: List[str]
             subject=subject.strip().capitalize(),
             question_text=text.strip(),
             options=json.dumps([opt.strip() for opt in options]),
-            answer=correct.strip()
+            answer=correct.strip(),
+            school_id=school_id  # <-- multi-tenant
         ))
         db.commit()
     finally:
         db.close()
 
 
-def get_questions_db(class_name: str, subject: str = None) -> List[Dict[str, Any]]:
-    """Fetch questions for a class (optionally filtered by subject)."""
+def get_questions_db(class_name: str, subject: str = None, school_id=None) -> List[Dict[str, Any]]:
+    """Fetch questions for a class (optionally filtered by subject and school)."""
     db = get_session()
     try:
         query = db.query(Question).filter(Question.class_name.ilike(class_name.strip()))
         if subject:
             query = query.filter(Question.subject.ilike(subject.strip()))
+        if school_id:
+            query = query.filter_by(school_id=school_id)
         rows = query.all()
 
         result = []
@@ -560,51 +665,51 @@ def get_questions_db(class_name: str, subject: str = None) -> List[Dict[str, Any
                 "question": q.question_text,
                 "options": opts,
                 "answer": q.answer,
-                "archived": q.archived  # <-- Add this!
+                "archived": q.archived
             })
         return result
     finally:
         db.close()
 
-
-def validate_question(q: Dict[str, Any]) -> bool:
-    """Validate a single question dict structure."""
-    if not isinstance(q, dict):
-        return False
-    if not all(k in q for k in ("question", "options", "answer")):
-        return False
-    if not isinstance(q["options"], list) or len(q["options"]) < 2:
-        return False
-    if not isinstance(q["answer"], str):
-        return False
-    if q["answer"].strip() not in [opt.strip() for opt in q["options"]]:
-        return False
-    return True
-
-
-
 @st.cache_data(ttl=60)
-def handle_uploaded_questions(class_name, subject, valid_questions):
+def handle_uploaded_questions(class_name, subject, valid_questions, school_id=None):
+    """Upload and replace questions for a class/subject with proper subject_id and automatic school_id."""
     from sqlalchemy import and_
     db = get_session()
     try:
+        # Automatically detect school_id from session if not provided
+        if not school_id:
+            school_id = get_current_school_id()
+
+        if not school_id:
+            return {"success": False, "error": "School ID not found in session or argument."}
+
         class_name_lower = class_name.strip().lower()
         subject_lower = subject.strip().lower()
 
-        # 🧹 STEP 1: Delete all old questions for this class and subject
-        deleted_count = (
-            db.query(Question)
-            .filter(
-                and_(
-                    Question.class_name == class_name_lower,
-                    Question.subject == subject_lower
-                )
-            )
-            .delete(synchronize_session=False)
-        )
-        db.commit()  # commit deletion immediately
+        # STEP 0: Fetch the corresponding Subject row within this school
+        subject_obj = db.query(Subject).filter(
+            func.lower(Subject.name) == subject_lower,
+            func.lower(Subject.class_name) == class_name_lower,
+            Subject.school_id == school_id
+        ).first()
 
-        # 🆕 STEP 2: Insert new questions
+        if not subject_obj:
+            return {
+                "success": False,
+                "error": f"Subject '{subject}' for class '{class_name}' not found in DB for this school (ID={school_id})."
+            }
+
+        # STEP 1: Delete old questions for this class, subject, and school
+        filters = [
+            Question.class_name == class_name_lower,
+            Question.subject == subject_lower,
+            Question.school_id == school_id
+        ]
+        deleted_count = db.query(Question).filter(and_(*filters)).delete(synchronize_session=False)
+        db.commit()
+
+        # STEP 2: Insert new questions
         new_records = []
         for q in valid_questions:
             question_text = q.get("question", "").strip()
@@ -620,9 +725,11 @@ def handle_uploaded_questions(class_name, subject, valid_questions):
                 Question(
                     class_name=class_name_lower,
                     subject=subject_lower,
+                    subject_id=subject_obj.id,  # link to Subject
                     question_text=question_text,
                     options=json.dumps(clean_options),
-                    answer=answer
+                    answer=answer,
+                    school_id=school_id
                 )
             )
 
@@ -645,53 +752,73 @@ def handle_uploaded_questions(class_name, subject, valid_questions):
 
 
 
-
 @st.cache_data(ttl=60)
-def load_questions_db(class_name: str, subject: str, limit: int = 30) -> List[Dict[str, Any]]:
-    """Fetch randomized questions from DB (default max 30)."""
+def load_questions_db(class_name: str, subject: str, school_id=None, limit: int = 30) -> list[dict]:
+    """Fetch randomized questions from DB (default max 30) with automatic school filter and subject_id."""
     db = get_session()
     try:
-        questions = (
-            db.query(Question)
-            .filter(
-                func.lower(Question.class_name) == class_name.strip().lower(),
-                func.lower(Question.subject) == subject.strip().lower()
-            )
-            .order_by(func.random())
-            .limit(limit)
-            .all()
+        # Automatically detect school_id from session if not provided
+        if not school_id:
+            school_id = get_current_school_id()
+
+        class_name_lower = class_name.strip().lower()
+        subject_lower = subject.strip().lower()
+
+        # Base query
+        query = db.query(Question).filter(
+            func.lower(Question.class_name) == class_name_lower,
+            func.lower(Question.subject) == subject_lower
         )
-        ...
+
+        # Limit to school if available
+        if school_id:
+            query = query.filter(Question.school_id == school_id)
+
+        # Randomize and limit results
+        questions = query.order_by(func.random()).limit(limit).all()
+
         result = []
         for q in questions:
+            # Safely parse options JSON
             try:
                 opts = json.loads(q.options) if isinstance(q.options, str) else q.options
-            except:
+            except Exception:
                 opts = [q.options] if isinstance(q.options, str) else []
+
             result.append({
                 "id": q.id,
                 "question": q.question_text,
                 "options": opts,
-                "answer": q.answer
+                "answer": q.answer,
+                "subject_id": q.subject_id,
+                "school_id": q.school_id
             })
 
         return result
+
+    except Exception as e:
+        print("❌ Error loading questions:", e)
+        return []
+
     finally:
         db.close()
 
-
-# db_helpers.py
-def delete_student_db(student_identifier):
+def delete_student_db(student_identifier, school_id=None):
     """
     Delete a student record using either integer ID or access_code.
+    Optional school_id ensures only students from that school are deleted.
     """
     db = get_session()
     try:
-        # Determine if the input looks like an integer ID or string access code
+        query = db.query(Student)
+        if school_id:
+            query = query.filter(Student.school_id == school_id)
+
+        # Determine if input is integer ID or string access_code
         if isinstance(student_identifier, int) or str(student_identifier).isdigit():
-            student = db.query(Student).filter_by(id=int(student_identifier)).first()
+            student = query.filter_by(id=int(student_identifier)).first()
         else:
-            student = db.query(Student).filter_by(access_code=str(student_identifier).strip()).first()
+            student = query.filter_by(access_code=str(student_identifier).strip()).first()
 
         if not student:
             print(f"⚠️ No student found for identifier: {student_identifier}")
@@ -709,37 +836,32 @@ def delete_student_db(student_identifier):
     finally:
         db.close()
 
-# -----------------------------
-# Submissions & Results
-# -----------------------------
+
+import re
+
 def normalize_text(text: str) -> str:
-    """Normalize text for consistent comparison."""
+    """Normalize text for safe string comparison (case + whitespace insensitive)."""
     if not text:
         return ""
-    return (
-        str(text).strip().lower()
-        .replace("₂", "2")
-        .replace("₃", "3")
-        .replace("₄", "4")
-        .replace("’", "'")
-    )
+    return re.sub(r"\s+", " ", text.strip().lower())
 
 
-def save_student_answers(access_code: str, subject: str, questions: list, answers: list):
+def save_student_answers(access_code: str, subject: str, questions: list, answers: list, school_id=None):
     """
     Save student answers to the database.
-    Converts indexed answers into option text, calculates score,
-    and calls add_submission_db() to persist results.
+    Ensures multi-tenant support by checking school_id if provided.
     """
     student = get_student_by_access_code_db(access_code)
     if not student:
         raise ValueError("Invalid student access code")
 
+    if school_id and student.school_id != school_id:
+        raise ValueError("Student does not belong to this school")
+
     submissions, correct = [], 0
     total = len(questions)
 
     for i, q in enumerate(questions):
-        # Ensure options is a list
         opts = q.get("options", [])
         if isinstance(opts, str):
             try:
@@ -770,19 +892,23 @@ def save_student_answers(access_code: str, subject: str, questions: list, answer
     print(f"Student: {student.name} | Subject: {subject}")
     print(f"✅ Final Score: {score}/{total} ({percentage:.1f}%)")
 
-    # Save results to DB
-    add_submission_db(student.id, subject, submissions, score, total, percentage)
+    # Save results to DB with optional school_id
+    add_submission_db(student.id, subject, submissions, score, total, percentage, school_id=school_id)
 
-
-def add_submission_db(student_id: int, subject: str, submissions: list, score: int, total: int, percentage: float):
+def add_submission_db(student_id: int, subject: str, submissions: list, score: int, total: int, percentage: float, school_id=None):
     """
     Save per-question submissions and a TestResult summary.
+    Multi-tenant aware via optional school_id.
     """
     db = get_session()
     try:
         student = db.query(Student).filter_by(id=student_id).first()
         if not student:
             raise ValueError("Invalid student ID")
+
+        # Verify school consistency if school_id provided
+        if school_id and student.school_id != school_id:
+            raise ValueError("Student does not belong to this school")
 
         # Save each per-question submission
         for sub in submissions:
@@ -791,7 +917,8 @@ def add_submission_db(student_id: int, subject: str, submissions: list, score: i
                 question_id=sub["question_id"],
                 selected_answer=sub["selected"],
                 correct=sub["is_correct"],
-                subject=subject
+                subject=subject,
+                school_id=school_id or student.school_id
             ))
 
         # Save test result summary
@@ -800,7 +927,8 @@ def add_submission_db(student_id: int, subject: str, submissions: list, score: i
             subject=subject,
             score=score,
             total=total,
-            percentage=percentage
+            percentage=percentage,
+            school_id=school_id or student.school_id
         ))
 
         db.commit()
@@ -817,14 +945,18 @@ def add_submission_db(student_id: int, subject: str, submissions: list, score: i
 # -----------------------------
 # Submissions
 # -----------------------------
-def set_submission_db(access_code, subject, questions, answers):
+def set_submission_db(access_code, subject, questions, answers, school_id=None):
     """
-    Save student submissions (answers = indices).
+    Save student submissions (answers = indices) with optional school_id.
     Converts index → option text to compare with correct_answer.
     """
     student = get_student_by_access_code_db(access_code)
     if not student:
         raise ValueError("Invalid student access code")
+
+    # Verify school consistency
+    if school_id and student.school_id != school_id:
+        raise ValueError("Student does not belong to this school")
 
     db = get_session()
     try:
@@ -846,7 +978,8 @@ def set_submission_db(access_code, subject, questions, answers):
                 question_id=q.get("id"),
                 selected_answer=selected,
                 correct=correct,
-                subject=subject
+                subject=subject,
+                school_id=school_id or student.school_id
             ))
 
         db.commit()
@@ -856,73 +989,97 @@ def set_submission_db(access_code, subject, questions, answers):
         db.close()
 
 
-def get_all_submissions_db():
-    """Return all submissions in the database."""
+def get_all_submissions_db(school_id=None):
+    """
+    Return all submissions in the database.
+    Optional school_id filters by school.
+    """
     db = get_session()
     try:
-        return db.query(Submission).all()
+        query = db.query(Submission)
+        if school_id:
+            query = query.filter(Submission.school_id == school_id)
+        return query.all()
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch submissions: {e}")
         return []
     finally:
         db.close()
 
-
 # -----------------------------
 # Retakes
 # -----------------------------
-def get_retake_db(access_code: str, subject: str) -> bool:
-    """Check if a student has retake permission for a subject."""
+def get_retake_db(access_code: str, subject: str, school_id=None) -> bool:
+    """Check if a student has retake permission for a subject (multi-tenant aware)."""
     db = get_session()
     try:
         student = db.query(Student).filter_by(access_code=access_code).first()
         if not student:
             return False
-        retake = db.query(Retake).filter_by(student_id=student.id, subject=subject).first()
+
+        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
+        if school_id:
+            query = query.filter(Retake.school_id == school_id)
+
+        retake = query.first()
         return bool(retake and retake.can_retake)
     finally:
         db.close()
 
 
-def decrement_retake(access_code: str, subject: str) -> None:
-    """Reduce the remaining retake count for a student by 1."""
+def decrement_retake(access_code: str, subject: str, school_id=None) -> None:
+    """Reduce the remaining retake count for a student by 1 (multi-tenant aware)."""
     db = get_session()
     try:
         student = db.query(Student).filter_by(access_code=access_code).first()
         if not student:
             raise ValueError("Invalid student access code")
 
-        retake = db.query(Retake).filter_by(student_id=student.id, subject=subject).first()
-        if retake and retake.can_retake > 0:
-            retake.can_retake -= 1
+        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
+        if school_id:
+            query = query.filter(Retake.school_id == school_id)
+
+        retake = query.first()
+        if retake and retake.can_retake:
+            retake.can_retake = False  # Or decrement numeric if using count
             db.commit()
     finally:
         db.close()
 
-
-def set_retake_db(access_code: str, subject: str, can_retake: bool = True):
-    """Create or update a student's retake permission for a subject."""
+def set_retake_db(access_code: str, subject: str, can_retake: bool = True, school_id=None):
+    """Create or update a student's retake permission for a subject (multi-tenant aware)."""
     db = get_session()
     try:
         student = db.query(Student).filter_by(access_code=access_code).first()
         if not student:
             raise ValueError("Invalid student access code")
 
-        retake = db.query(Retake).filter_by(student_id=student.id, subject=subject).first()
+        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
+        if school_id:
+            query = query.filter(Retake.school_id == school_id)
+
+        retake = query.first()
         if retake:
             retake.can_retake = can_retake
         else:
-            db.add(Retake(student_id=student.id, subject=subject, can_retake=can_retake))
+            db.add(Retake(
+                student_id=student.id,
+                subject=subject,
+                can_retake=can_retake,
+                school_id=school_id or student.school_id
+            ))
         db.commit()
     finally:
         db.close()
-
 
 # -----------------------------
 # Score Calculation
 # -----------------------------
 def calculate_score_db(student_name, subject, questions, answers_dict):
-    """Compare answers_dict against correct answers and return score details."""
+    """
+    Compare answers_dict against correct answers and return score details.
+    This function does not require school_id because it only computes scores.
+    """
     correct, wrong, details = 0, 0, []
 
     for q in questions:
@@ -948,37 +1105,36 @@ def calculate_score_db(student_name, subject, questions, answers_dict):
         })
 
     return correct, wrong, details
-
-
 # -----------------------------
 # Submission Helpers
 # -----------------------------
-def get_submission_db(student_id, subject=None):
-    """Fetch submissions for a student (optionally filtered by subject)."""
+def get_submission_db(student_id, subject=None, school_id=None):
+    """Fetch submissions for a student (optionally filtered by subject and school)."""
     db = get_session()
     try:
         query = db.query(Submission).filter_by(student_id=student_id)
         if subject:
             query = query.filter_by(subject=subject)
+        if school_id:
+            query = query.filter(Submission.school_id == school_id)
         return query.all()
     finally:
         db.close()
 
 
-def can_take_test(access_code: str, subject: str) -> tuple[bool, str]:
-    """Check if a student is allowed to take a test."""
+def can_take_test(access_code: str, subject: str, school_id=None) -> tuple[bool, str]:
+    """Check if a student is allowed to take a test (multi-tenant aware)."""
     student = get_student_by_access_code_db(access_code)
     if not student:
         return False, "🛑 Invalid student access code."
 
-    submissions = get_submission_db(student.id, subject)
-    can_retake = get_retake_db(access_code, subject)
+    submissions = get_submission_db(student.id, subject, school_id)
+    can_retake = get_retake_db(access_code, subject, school_id)
 
     if submissions and not can_retake:
         return False, "🛑 You have already submitted this test."
 
     return True, ""
-
 
 # -----------------------------
 # Question Tracker (UI only)
@@ -1049,36 +1205,74 @@ def show_question_tracker(questions, answers):
 # 🕒 Test Duration Helpers
 # ==============================
 
-def get_test_duration(default=30):
+def set_test_duration(class_name: str, subject: str, school_id: int, duration_minutes: int):
     """
-    Fetch test duration (in minutes) from DB and return it in SECONDS.
-    Falls back to default minutes if not set.
+    Save or update test duration in DB for a given class, subject, and school.
+    Duration is stored in SECONDS.
     """
+    if not (class_name and subject and school_id):
+        print("⚠️ Missing class, subject, or school_id in set_test_duration().")
+        return
+
     db = get_session()
     try:
-        config = db.query(Config).filter_by(key="test_duration").first()
-        if config:
-            return int(config.value) * 60
-        return default * 60
-    finally:
-        db.close()
+        from models import TestDuration  # ensure the model is imported
 
+        duration_seconds = duration_minutes * 60
+        record = db.query(TestDuration).filter_by(
+            class_name=class_name.strip(),
+            subject=subject.strip(),
+            school_id=school_id
+        ).first()
 
-def set_test_duration(duration):
-    """
-    Save or update test duration in DB (stored as MINUTES).
-    """
-    db = get_session()
-    try:
-        config = db.query(Config).filter_by(key="test_duration").first()
-        if config:
-            config.value = str(duration)
+        if record:
+            record.duration = duration_seconds
         else:
-            db.add(Config(key="test_duration", value=str(duration)))
+            db.add(TestDuration(
+                class_name=class_name.strip(),
+                subject=subject.strip(),
+                school_id=school_id,
+                duration=duration_seconds
+            ))
+
         db.commit()
+        print(f"✅ Duration saved: {duration_minutes} min for {class_name}-{subject} (school_id={school_id})")
+    except Exception as e:
+        print(f"❌ set_test_duration() error: {e}")
+        db.rollback()
+        raise
     finally:
         db.close()
 
+
+def get_test_duration(class_name: str, subject: str, school_id: int):
+    """
+    Fetch test duration (in seconds) for a given class, subject, and school.
+    Returns None if not found.
+    """
+    if not (class_name and subject and school_id):
+        return None  # 🚫 No warning message anymore
+
+    db = get_session()
+    try:
+        from models import TestDuration  # ensure model is imported
+
+        record = db.query(TestDuration).filter_by(
+            class_name=class_name.strip(),
+            subject=subject.strip(),
+            school_id=school_id
+        ).first()
+
+        if record and record.duration and record.duration > 0:
+            return int(record.duration)
+
+        print(f"⚠️ No duration found for {class_name}-{subject} (school_id={school_id})")
+        return None
+    except Exception as e:
+        print(f"❌ get_test_duration() error: {e}")
+        return None
+    finally:
+        db.close()
 
 # ==============================
 # 📋 Question Helpers
@@ -1128,15 +1322,116 @@ def count_questions_db(class_name=None, subject=None):
     finally:
         db.close()
 
-
-def clear_questions_db():
-    """Delete all questions."""
+def clear_questions_db(school_id=None):
+    """
+    Delete questions.
+    - If `school_id` is provided → delete only that school's questions.
+    - If `school_id` is None → super_admin can delete all.
+    """
     db = get_session()
     try:
-        db.query(Question).delete()
+        query = db.query(Question)
+        if school_id is not None:
+            query = query.filter_by(school_id=school_id)
+        deleted_count = query.delete(synchronize_session=False)
         db.commit()
+        return deleted_count  # Optional: return number of deleted records
     finally:
         db.close()
+
+
+
+def load_subjects(class_name: str | None = None, school_id: int | None = None):
+    """Load subjects automatically filtered by current school."""
+    db = get_session()
+    try:
+        if not school_id:
+            school_id = get_current_school_id()
+
+        query = db.query(Subject).filter(Subject.school_id == school_id)
+        if class_name:
+            query = query.filter(Subject.class_name.ilike(class_name.strip()))
+        return [s.name for s in query.all()]
+
+    finally:
+        db.close()
+
+def save_subjects(subjects: list, class_name: str | None = None):
+    """Save subjects directly to the database (replaces file storage)."""
+    db = get_session()
+    try:
+        school_id = get_current_school_id()
+        if not school_id:
+            st.session_state["subject_msg"] = ("error", "❌ No school ID found for current admin.")
+            return False
+
+        if not class_name:
+            st.session_state["subject_msg"] = ("error", "⚠️ Please select a valid class before saving subjects.")
+            return False
+
+        # Clear old subjects for that class
+        db.query(Subject).filter(
+            Subject.school_id == school_id,
+            Subject.class_name.ilike(class_name.strip())
+        ).delete()
+
+        # Add the new ones
+        for s in sorted(set([str(x).strip() for x in subjects if str(x).strip()])):
+            db.add(Subject(name=s, class_name=class_name.strip(), school_id=school_id))
+
+        db.commit()
+        st.session_state["subject_msg"] = ("success", f"✅ Subjects saved successfully for {class_name}.")
+        st.session_state["last_updated_class"] = class_name.strip()
+        return True
+
+    except Exception as e:
+        db.rollback()
+        st.session_state["subject_msg"] = ("error", f"❌ Error saving subjects: {e}")
+        return False
+
+    finally:
+        db.close()
+
+
+def delete_subject(subject_name: str, school_id: int | None = None, class_name: str | None = None):
+    """Delete a subject safely by name, class, and school."""
+    db = get_session()
+    try:
+        query = db.query(Subject).filter(Subject.name.ilike(subject_name.strip()))
+        if school_id:
+            query = query.filter(Subject.school_id == school_id)
+        if class_name:
+            query = query.filter(Subject.class_name.ilike(class_name.strip()))
+
+        subject = query.first()
+        if not subject:
+            st.warning(f"⚠️ Subject '{subject_name}' not found for {class_name}.")
+            return False
+
+        # Check linked questions (by name + class + school)
+        linked_questions = db.query(Question).filter(
+            Question.subject.ilike(subject_name.strip()),
+            Question.class_name.ilike(class_name.strip()),
+            Question.school_id == school_id
+        ).count()
+
+        if linked_questions > 0:
+            st.warning(f"⚠️ Cannot delete '{subject_name}' — {linked_questions} question(s) linked.")
+            return False
+
+        db.delete(subject)
+        db.commit()
+        st.success(f"✅ Subject '{subject_name}' deleted successfully for {class_name}.")
+        st.rerun()
+        return True
+
+    except Exception as e:
+        db.rollback()
+        st.error(f"❌ Error deleting subject: {e}")
+        return False
+    finally:
+        db.close()
+
 
 
 def save_questions_db(questions):
@@ -1163,13 +1458,20 @@ def save_questions_db(questions):
 # ==============================
 # 👨‍🎓 Student Helpers
 # ==============================
-
-def clear_students_db():
-    """Delete all students."""
+def clear_students_db(school_id=None):
+    """
+    Delete students.
+    - If `school_id` is provided → delete only that school's students.
+    - If `school_id` is None → delete all (super_admin only).
+    """
     db = get_session()
     try:
-        db.query(User).delete()
+        query = db.query(Student)  # ✅ fixed from User → Student
+        if school_id is not None:
+            query = query.filter_by(school_id=school_id)
+        deleted_count = query.delete(synchronize_session=False)
         db.commit()
+        return deleted_count
     finally:
         db.close()
 
@@ -1199,12 +1501,21 @@ def update_student_db(student_id, new_name, new_class):
 # 📝 Submission Helpers
 # ==============================
 
-def clear_submissions_db():
-    """Delete all submissions."""
+def clear_submissions_db(school_id=None):
+    """
+    Delete submissions.
+    - If `school_id` is provided → delete only that school's submissions.
+    - If `school_id` is None → delete all (super_admin only).
+    """
     db = get_session()
     try:
-        db.query(Submission).delete()
+        query = db.query(Submission)
+        if school_id is not None:
+            # Join with Student to ensure we only delete submissions belonging to that school
+            query = query.join(Student).filter(Student.school_id == school_id)
+        deleted_count = query.delete(synchronize_session=False)
         db.commit()
+        return deleted_count
     finally:
         db.close()
 
@@ -1293,19 +1604,17 @@ def has_submitted_test(access_code: str, subject: str) -> bool:
 
 
 
-# db_helpers.py
-from database import get_session
-from models import StudentProgress
-from sqlalchemy.exc import SQLAlchemyError
-
 # ==============================
-# 🧠 Save Ongoing Test Progress
+# 🧠 Save Ongoing Test Progress (Multi-Tenant)
 # ==============================
-def save_progress(access_code: str, subject: str, answers: list, current_q: int, start_time: float, duration: int, questions: list):
-    """Insert or update ongoing test progress."""
+def save_progress(access_code: str, subject: str, answers: list, current_q: int, start_time: float, duration: int, questions: list, school_id=None):
+    """Insert or update ongoing test progress with optional school_id."""
     db = get_session()
     try:
-        record = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject).first()
+        query = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        record = query.first()
 
         if record:
             record.answers = answers
@@ -1321,7 +1630,8 @@ def save_progress(access_code: str, subject: str, answers: list, current_q: int,
                 current_q=current_q,
                 start_time=start_time,
                 duration=duration,
-                questions=questions
+                questions=questions,
+                school_id=school_id
             )
             db.add(record)
 
@@ -1332,17 +1642,20 @@ def save_progress(access_code: str, subject: str, answers: list, current_q: int,
     finally:
         db.close()
 
-# ==============================
-# 📥 Load Saved Progress
-# ==============================
 
-from typing import Optional, Dict, List
+# ==============================
+# 📥 Load Saved Progress (Multi-Tenant)
+# ==============================
 @st.cache_data(ttl=300)  # cache for 5 minutes
-def load_progress(access_code: str, subject: str) -> Optional[Dict]:
-    """Return saved progress for a student and subject."""
+def load_progress(access_code: str, subject: str, school_id=None) -> Optional[Dict]:
+    """Return saved progress for a student and subject with optional school_id."""
     db = get_session()
     try:
-        record = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject).first()
+        query = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        record = query.first()
+
         if record:
             return {
                 "answers": record.answers,
@@ -1357,17 +1670,345 @@ def load_progress(access_code: str, subject: str) -> Optional[Dict]:
         return None
     finally:
         db.close()
+
+
 # ==============================
-# 🧹 Clear Progress After Submission
+# 🧹 Clear Progress After Submission (Multi-Tenant)
 # ==============================
-def clear_progress(access_code: str, subject: str):
-    """Remove saved progress after test submission."""
+def clear_progress(access_code: str, subject: str, school_id=None):
+    """Remove saved progress after test submission with optional school_id."""
     db = get_session()
     try:
-        db.query(StudentProgress).filter_by(access_code=access_code, subject=subject).delete()
+        query = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject)
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        query.delete()
         db.commit()
     except SQLAlchemyError as e:
         print("❌ Clear progress error:", e)
         db.rollback()
+    finally:
+        db.close()
+
+# ------------------------------
+# Generate short unique school code
+# ------------------------------
+def generate_unique_school_code(name, db, length=6, max_attempts=10):
+    """
+    Generate a unique school code. Retry up to max_attempts to avoid collisions.
+    """
+    base = ''.join(e for e in name.upper() if e.isalnum())[:length]
+
+    for _ in range(max_attempts):
+        suffix = ''.join(random.choices(string.digits, k=3))
+        code = f"{base}{suffix}"
+        if not db.query(School).filter_by(code=code).first():
+            return code
+    raise ValueError(f"Failed to generate a unique school code for {name} after {max_attempts} attempts.")
+
+
+def add_school(name, address=None, code=None, db=None, return_dict=False):
+    """
+    Add a school with optional code. Returns model or dict.
+
+    Parameters:
+        name (str): School name (required)
+        address (str, optional)
+        code (str, optional): if not provided, generated automatically
+        db (Session, optional): SQLAlchemy session
+        return_dict (bool): if True, returns a dict instead of model
+    """
+    if not name or not name.strip():
+        raise ValueError("School name cannot be empty.")
+
+    close_db = False
+    if db is None:
+        db = get_session()
+        close_db = True
+
+    try:
+        # Check for existing school by name
+        existing = db.query(School).filter(School.name.ilike(name.strip())).first()
+        if existing:
+            return {
+                "exists": True,
+                "id": existing.id,
+                "name": existing.name,
+                "code": existing.code
+            } if return_dict else existing
+
+        # Generate unique code if not provided
+        school_code = code or generate_unique_school_code(name, db)
+
+        # Create and save
+        school = School(name=name.strip(), code=school_code, address=address)
+        db.add(school)
+        db.commit()
+        db.refresh(school)
+
+        return {
+            "exists": False,
+            "id": school.id,
+            "name": school.name,
+            "code": school.code
+        } if return_dict else school
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise e
+    finally:
+        if close_db:
+            db.close()
+
+
+# ------------------------------
+# Get all schools (as dicts)
+# ------------------------------
+def get_all_schools(db=None):
+    close_db = False
+    if db is None:
+        db = get_session()
+        close_db = True
+
+    try:
+        return db.query(School).order_by(School.name.asc()).all()
+    finally:
+        if close_db:
+            db.close()
+
+# ------------------------------
+# Get students by school (as dicts)
+# ------------------------------
+def get_students_by_school(school_id, class_level=None, active_only=True, db=None):
+    """
+    Return students of a school as a list of dicts, with optional filters.
+    Suitable for Streamlit tables or selectboxes.
+    """
+    if not school_id:
+        raise ValueError("School ID is required.")
+
+    close_db = False
+    if db is None:
+        db = get_session()
+        close_db = True
+
+    try:
+        query = db.query(Student).filter(Student.school_id == school_id)
+
+        if class_level:
+            query = query.filter(Student.class_level == class_level)
+
+        if active_only and hasattr(Student, "is_active"):
+            query = query.filter(Student.is_active == True)
+
+        students = query.order_by(Student.username.asc()).all()
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "username": getattr(s, "username", ""),
+                "class_level": getattr(s, "class_level", ""),
+                "access_code": getattr(s, "access_code", ""),
+                "active": getattr(s, "is_active", True)
+            }
+            for s in students
+        ]
+    except Exception as e:
+        print(f"❌ Error fetching students for school {school_id}: {e}")
+        return []
+    finally:
+        if close_db:
+            db.close()
+
+
+
+def get_current_school_id() -> int | None:
+    """
+    Safely fetch the current logged-in admin's school_id from session.
+    Works for both super_admin and school_admin.
+    """
+    return (
+        st.session_state.get("school_id")
+        or st.session_state.get("admin_school_id")
+        or st.session_state.get("current_school_id")
+    )
+
+
+
+# =====================================================
+# 🧭 ASSIGN ADMIN TO A SCHOOL
+# =====================================================
+def assign_admin_to_school(admin_id: int | str, school_id: int, db=None):
+    """
+    Assign an admin to a specific school.
+    Accepts either numeric admin_id or username.
+    """
+    if not admin_id or not school_id:
+        raise ValueError("Admin ID and School ID are required.")
+
+    close_db = False
+    if db is None:
+        db = get_session()
+        close_db = True
+
+    try:
+        # ✅ Handle both ID (int) and username (str)
+        if isinstance(admin_id, int) or (isinstance(admin_id, str) and admin_id.isdigit()):
+            admin = db.query(Admin).filter_by(id=int(admin_id)).first()
+        else:
+            admin = db.query(Admin).filter(Admin.username.ilike(admin_id.strip())).first()
+
+        school = db.query(School).filter_by(id=school_id).first()
+
+        if not admin:
+            raise ValueError("Admin not found.")
+        if not school:
+            raise ValueError("School not found.")
+
+        admin.school_id = school_id
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Admin '{admin.username}' assigned to school '{school.name}'."
+        }
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise e
+    finally:
+        if close_db:
+            db.close()
+
+# =====================================================
+# 🧭 SCHOOL CONTEXT HANDLER (For Non–Super Admins)
+# =====================================================
+
+def get_or_select_school():
+    """
+    Returns a valid school_id for the current admin.
+    If none is assigned, allows them to select or create one.
+    """
+    session = get_session()
+    admin_role = st.session_state.get("admin_role")
+    school_id = st.session_state.get("school_id")
+
+    # If already assigned, return it
+    if school_id:
+        return school_id
+
+    # If Super Admin, they already pick schools manually later
+    if admin_role == "super_admin":
+        return None
+
+    st.warning("⚠️ No school assigned to your account yet.")
+    st.markdown("### 🏫 Select or Create Your School")
+
+    # Show existing schools
+    schools = get_all_schools()
+    school_options = [s.name for s in schools] if schools else []
+
+    choice = st.selectbox(
+        "Select School or Add New:",
+        school_options + ["➕ Add New School"],
+        key="admin_select_school"
+    )
+
+    if choice == "➕ Add New School":
+        new_school_name = st.text_input("Enter New School Name:", key="new_school_name_field")
+        if st.button("✅ Create School", key="create_school_btn"):
+            if not new_school_name.strip():
+                st.error("❌ Please enter a valid school name.")
+            else:
+                try:
+                    new_school = add_school(new_school_name.strip())
+                    st.success(f"🏫 School '{new_school.name}' created successfully!")
+                    # Assign to current admin
+                    assign_admin_to_school(st.session_state["admin_id"], new_school.id)
+                    st.session_state["school_id"] = new_school.id
+                    st.session_state["school_name"] = new_school.name
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ Failed to create school: {e}")
+    else:
+        selected_school = next((s for s in schools if s.name == choice), None)
+        if selected_school and st.button(f"🏫 Use {selected_school.name}", key="use_school_btn"):
+            assign_admin_to_school(st.session_state["admin_id"], selected_school.id)
+            st.session_state["school_id"] = selected_school.id
+            st.session_state["school_name"] = selected_school.name
+            st.success(f"✅ You are now managing: {selected_school.name}")
+            st.rerun()
+
+    st.stop()  # Stop page until selection is made
+
+def delete_school(school_id, db=None):
+    from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+    from models import School
+
+    close_db = False
+    if db is None:
+        db = get_session()
+        close_db = True
+
+    try:
+        print(f"🧩 DB in use: {db.bind.url}")
+        print(f"🗑️ Trying to delete school ID: {school_id} (type: {type(school_id)})")
+
+        deleted = db.query(School).filter(School.id == int(school_id)).delete(synchronize_session=False)
+        db.commit()
+
+        print(f"🧾 Deleted count: {deleted}")
+
+        # Verify immediately
+        remaining = db.query(School).filter(School.id == int(school_id)).first()
+        print("🕵️‍♂️ Remaining record:", remaining)
+
+        return True
+
+    except Exception as e:
+        db.rollback()
+        print(f"💥 Error during delete: {type(e).__name__}: {e}")
+        return False
+
+    finally:
+        if close_db:
+            db.close()
+
+
+def load_student_results(access_code: str, school_id=None):
+    """
+    Fetch all test results for a student using their access code.
+    Joins students -> test_results by student_id.
+    """
+    db = get_session()
+    try:
+        # Step 1: Find the student by access code (case-insensitive)
+        student = (
+            db.query(Student)
+            .filter(func.upper(Student.access_code) == access_code.strip().upper())
+            .first()
+        )
+
+        if not student:
+            print(f"⚠️ No student found for access code {access_code}")
+            return []
+
+        # Step 2: Fetch test results by student_id
+        results_query = db.query(TestResult).filter_by(student_id=student.id)
+
+        if school_id:
+            results_query = results_query.filter_by(school_id=school_id)
+
+        results = results_query.order_by(TestResult.taken_at.desc()).all()
+
+        # ✅ Attach class_name manually if needed for display
+        for r in results:
+            r.class_name = getattr(student, "class_name", "N/A")
+
+        return results
+
+    except Exception as e:
+        print(f"❌ Error loading results for {access_code}: {e}")
+        return []
     finally:
         db.close()
