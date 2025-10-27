@@ -5,6 +5,11 @@ import time
 import json
 import qrcode
 import streamlit as st
+import qrcode, io
+import pandas as pd
+from sqlalchemy.orm import Session
+from database import get_session
+from models import Student
 from ui import render_test, generate_pdf
 from db_helpers import (
     get_submission_db,
@@ -174,11 +179,6 @@ def run_student_mode():
         st.header("📊 View Past Performance")
         access_code_perf = st.text_input("Enter Access Code", key="sidebar_access_code")
 
-        import qrcode, io
-        import pandas as pd
-        from sqlalchemy.orm import Session
-        from database import get_session
-        from models import Student
 
         def generate_qr_code(data):
             qr = qrcode.QRCode(version=1, box_size=8, border=2)
@@ -256,6 +256,32 @@ def run_student_mode():
                     )
                 else:
                     st.info("No results found yet. 🕒")
+
+                # ------------------------------
+                # Refresh Test Button
+                # ------------------------------
+                if st.button("🔄 Refresh Test", key="refresh_update_state"):
+                    access_code = student_perf.access_code.strip()
+                    subject = st.session_state.get("subject")
+
+                    # Clear local session state
+                    for k in [
+                        "test_started", "submitted", "questions", "answers", "current_q",
+                        "marked_for_review", "start_time", "duration", "five_min_warned",
+                        "saved_to_db", "last_auto_save"
+                    ]:
+                        st.session_state.pop(k, None)
+
+                    # Attempt to clear saved progress from DB
+                    if access_code and subject:
+                        try:
+                            clear_progress(access_code, subject)
+                            st.success("Saved progress cleared from database.")
+                        except Exception as e:
+                            st.warning(f"Could not clear saved progress from DB — local state cleared only.\n{e}")
+
+                    st.success("Test has been cleared. You can start a new test.")
+                    st.rerun()
 
     # ==============================
     # Auto-load results via QR URL

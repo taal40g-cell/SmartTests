@@ -79,7 +79,7 @@ def inject_tab_style():
 
         /* Main tab button styling */
         div[data-testid="stHorizontalBlock"] button {
-            background-color: #ff7e5a !important;     /* Soft neutral base */
+            background-color: #fdbb9f !important;     /* Soft neutral base */
             color: #0065a2 !important;
             border: none !important;
             border-radius: 50px !important;           /* ✅ Rounded pill look */
@@ -94,7 +94,7 @@ def inject_tab_style():
 
         /* Hover effect */
         div[data-testid="stHorizontalBlock"] button:hover {
-            background-color: #ffb0b7 !important;     /* Softer hover pink */
+            background-color: #7abaa1 !important;     /* Softer hover pink */
             color: white !important;
             transform: translateY(-1px);
             box-shadow: 0 3px 6px rgba(0,0,0,0.15);
