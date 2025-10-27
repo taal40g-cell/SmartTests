@@ -111,3 +111,6 @@ if __name__ == "__main__":
             print("✅ Connected successfully. Current time:", result.scalar())
     except Exception as e:
         print("❌ Final test failed:", e)
+from models import Base  # import all models (students, schools, etc.)
+Base.metadata.create_all(bind=engine)
+print("✅ All database tables created (PostgreSQL).")
