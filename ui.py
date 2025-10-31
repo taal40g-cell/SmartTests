@@ -16,6 +16,12 @@ from datetime import datetime
 # -----------------------------
 # Cached function to read & encode image
 # -----------------------------
+# -----------------------------
+# Cached function to read & encode image
+# -----------------------------
+# -----------------------------
+# Cached function to read & encode image
+# -----------------------------
 @st.cache_data(ttl=600)
 def get_base64_image(file_path: str) -> str:
     """Read a local image file and return base64-encoded string."""
@@ -26,12 +32,8 @@ def get_base64_image(file_path: str) -> str:
 
 def set_background(file_path: str = None, color: str = "#7abaa1", force_reload: bool = False):
     """
-    Sets a Streamlit app background using either a local image or a solid/gradient color.
-
-    Parameters:
-    - file_path: Optional path to the image file.
-    - color: Hex color to use if image is not provided or missing.
-    - force_reload: If True, clears cached image.
+    Sets a Streamlit app background using a shared image for both
+    main page and sidebar, with a soft translucent overlay for readability.
     """
     base64_image = None
 
@@ -51,25 +53,55 @@ def set_background(file_path: str = None, color: str = "#7abaa1", force_reload: 
     else:
         base64_image = None
 
-    # Apply either image or color background
     if base64_image:
         st.markdown(
             f"""
             <style>
+            /* 🌄 Main background */
             .stApp {{
-                background-image: url("data:image/png;base64,{base64_image}");
-                background-size: cover;
-                background-repeat: no-repeat;
+                background: url("data:image/png;base64,{base64_image}") center/cover no-repeat fixed;
                 background-attachment: fixed;
+                background-position: center;
             }}
-            section[data-testid="stSidebar"] {{
-                background-color: rgba(122, 186, 161, 0.9) !important;
+
+            /* 🌄 Sidebar uses same background image with a light frosted overlay */
+            section[data-testid="stSidebar"] > div:first-child {{
+                background: 
+                    linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.9)),
+                    url("data:image/png;base64,{base64_image}") center/cover no-repeat fixed !important;
+                color: #0f3c2e !important;
+                backdrop-filter: blur(6px);
+            }}
+
+            /* Sidebar titles/text */
+            section[data-testid="stSidebar"] h1,
+            section[data-testid="stSidebar"] h2,
+            section[data-testid="stSidebar"] h3,
+            section[data-testid="stSidebar"] p,
+            section[data-testid="stSidebar"] span {{
+                color: #0f3c2e !important;
+                font-weight: 500;
+            }}
+
+            /* Sidebar buttons (soft mint style on image) */
+            .stSidebar button {{
+                background: linear-gradient(145deg, #9edbbb, #7bc8a2) !important;
+                color: #fff !important;
+                border: none !important;
+                border-radius: 10px !important;
+                transition: 0.3s ease-in-out;
+                margin-bottom: 6px;
+            }}
+            .stSidebar button:hover {{
+                transform: translateY(-2px);
+                background: linear-gradient(145deg, #7bc8a2, #9edbbb) !important;
             }}
             </style>
             """,
             unsafe_allow_html=True
         )
     else:
+        # Fallback: gradient color background
         st.markdown(
             f"""
             <style>
@@ -78,27 +110,13 @@ def set_background(file_path: str = None, color: str = "#7abaa1", force_reload: 
                 color: #222 !important;
             }}
             section[data-testid="stSidebar"] {{
-                background-color: {color} !important;
-                background-image: linear-gradient(135deg, {color}, #94c7ad);
+                background: linear-gradient(135deg, {color}, #94c7ad);
                 color: #fff !important;
-                border-right: 2px solid rgba(255, 255, 255, 0.1);
-            }}
-            .stSidebar button {{
-                background: linear-gradient(145deg, #8dcbb3, #6fae96) !important;
-                color: #fff !important;
-                border: none !important;
-                border-radius: 10px !important;
-                transition: 0.3s ease-in-out;
-            }}
-            .stSidebar button:hover {{
-                transform: translateY(-2px);
-                background: linear-gradient(145deg, #6fae96, #8dcbb3) !important;
             }}
             </style>
             """,
             unsafe_allow_html=True
         )
-
 
 
 def render_test(questions, subject):

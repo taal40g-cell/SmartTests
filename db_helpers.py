@@ -11,7 +11,7 @@ import string
 import uuid
 # db_helpers.py
 
-from models import StudentProgress,School,Subject,TestDuration
+from models import StudentProgress,School,Subject,TestDuration,ArchivedQuestion
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional, Dict, List, Any
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, JSON, func
@@ -257,17 +257,20 @@ def require_school_context():
 def require_admin_login(tenant_school_id: int | None = None):
     """
     Streamlit login flow for admins.
-    Supports:
-    - super_admin → full access to all schools
-    - school_admin → restricted to their assigned school
-    - tenant_school_id → optional filter for specific school/tenant
+    Handles:
+      - super_admin → full access
+      - school_admin → scoped to assigned school
     """
 
     # -------------------------------------------------------
-    # ✅ EARLY EXIT — Already logged in
+    # ✅ Persistent Login Check
     # -------------------------------------------------------
-    if st.session_state.get("admin_logged_in", False):
-        # Show quick sidebar info
+    if (
+        "admin_logged_in" in st.session_state
+        and st.session_state.admin_logged_in
+        and "admin_username" in st.session_state
+        and "admin_role" in st.session_state
+    ):
         st.sidebar.success(
             f"✅ Logged in as {st.session_state.admin_username} "
             f"({st.session_state.admin_role})"
@@ -275,40 +278,37 @@ def require_admin_login(tenant_school_id: int | None = None):
         return True
 
     # -------------------------------------------------------
-    # Super Admin Password Reset (Inner Helper)
+    # 🔐 Super Admin Password Reset Helper
     # -------------------------------------------------------
     def show_super_admin_reset():
-        """Display Super Admin password reset flow."""
-        if st.session_state.get("show_reset_pw", False):
-            st.info("🔐 Super Admin Password Reset")
+        st.info("🔐 Super Admin Password Reset")
 
-            super_admin_user = st.text_input("Super Admin Username", key="super_admin_user")
-            super_admin_pass = st.text_input("Super Admin Password", type="password", key="super_admin_pass")
+        super_admin_user = st.text_input("Super Admin Username", key="super_admin_user")
+        super_admin_pass = st.text_input("Super Admin Password", type="password", key="super_admin_pass")
 
-            if st.button("Authenticate Super Admin"):
-                sa = get_all_admins(super_admin_user.strip())
-                if sa and sa.role == "super_admin" and verify_password(super_admin_pass, sa.password_hash):
-                    st.session_state.super_admin_authenticated = True
-                    st.success("✅ Super Admin authenticated! You can now reset admin passwords.")
+        if st.button("Authenticate Super Admin"):
+            sa = get_all_admins(super_admin_user.strip())
+            if sa and sa.role == "super_admin" and verify_password(super_admin_pass, sa.password_hash):
+                st.session_state.super_admin_authenticated = True
+                st.success("✅ Super Admin authenticated! You can now reset admin passwords.")
+            else:
+                st.error("❌ Invalid Super Admin credentials")
+
+        if st.session_state.get("super_admin_authenticated", False):
+            reset_username = st.text_input("Username to Reset", key="reset_target_user")
+            new_pw = st.text_input("New Password", type="password", key="reset_new_pw")
+
+            if st.button("Confirm Reset"):
+                target = get_all_admins(reset_username.strip())
+                if target:
+                    update_admin_password(reset_username.strip(), new_pw)
+                    st.success(f"✅ Password for '{reset_username}' reset successfully!")
+                    st.session_state.super_admin_authenticated = False
                 else:
-                    st.error("❌ Invalid Super Admin credentials")
-
-            if st.session_state.get("super_admin_authenticated", False):
-                reset_username = st.text_input("Username to Reset", key="reset_target_user")
-                new_pw = st.text_input("New Password", type="password", key="reset_new_pw")
-
-                if st.button("Confirm Reset"):
-                    target = get_all_admins(reset_username.strip())
-                    if target:
-                        update_admin_password(reset_username.strip(), new_pw)
-                        st.success(f"✅ Password for '{reset_username}' reset successfully!")
-                        st.session_state.show_reset_pw = False
-                        st.session_state.super_admin_authenticated = False
-                    else:
-                        st.error("❌ User not found")
+                    st.error("❌ User not found")
 
     # -------------------------------------------------------
-    # Admin Login Form
+    # 🧩 Admin Login Form
     # -------------------------------------------------------
     st.subheader("🔑 Admin Login")
 
@@ -322,21 +322,27 @@ def require_admin_login(tenant_school_id: int | None = None):
         login_button = st.button("🔐 Login", use_container_width=True)
         reset_button = st.button("🔁 Reset", use_container_width=True)
 
+    if reset_button:
+        st.session_state.show_reset_pw = not st.session_state.get("show_reset_pw", False)
+        st.rerun()
+
+    if st.session_state.get("show_reset_pw", False):
+        show_super_admin_reset()
+        return False
+
     # -------------------------------------------------------
-    # Login Button Action
+    # 🚪 Login Button Logic
     # -------------------------------------------------------
-    if login_button:
+    if login_button and username and password:
         db = get_session()
         try:
             query = db.query(Admin).filter(Admin.username.ilike(username.strip()))
-
-            # Apply tenant restriction if provided
             if tenant_school_id:
                 query = query.filter(
                     (Admin.school_id == tenant_school_id) | (Admin.role == "super_admin")
                 )
-
             admin = query.first()
+
             if not admin:
                 st.error("❌ Username not found or unauthorized for this school.")
                 return False
@@ -345,30 +351,24 @@ def require_admin_login(tenant_school_id: int | None = None):
                 st.error("❌ Invalid password.")
                 return False
 
-            # ✅ Store session data properly before rerun
-            st.session_state.admin_logged_in = True
-            st.session_state.admin_username = admin.username
-            st.session_state.admin_role = admin.role
-            st.session_state.admin_school_id = admin.school_id
-            st.session_state.school_name = admin.school.name if admin.school else "Global"
-            st.session_state.school_id = admin.school_id
-            st.session_state.current_school_id = admin.school_id
-
-            # ✅ Unified admin dictionary for consistent downstream usage
-            st.session_state.admin = {
-                "username": admin.username,
-                "role": admin.role,
+            # ✅ Safe session setup
+            st.session_state.update({
+                "admin_logged_in": True,
+                "admin_username": admin.username,
+                "admin_role": admin.role,
+                "admin_school_id": admin.school_id,
+                "school_name": admin.school.name if admin.school else "Global",
                 "school_id": admin.school_id,
-                "school_name": admin.school.name if admin.school else "Global"
-            }
-
-            # ✅ For super admin, allow global access
-            if admin.role == "super_admin":
-                st.session_state.current_school_id = None
+                "current_school_id": admin.school_id if admin.role != "super_admin" else None,
+                "admin": {
+                    "username": admin.username,
+                    "role": admin.role,
+                    "school_id": admin.school_id,
+                    "school_name": admin.school.name if admin.school else "Global"
+                }
+            })
 
             st.sidebar.success(f"✅ Logged in as {admin.username} ({admin.role})")
-
-            # 🔁 Trigger a rerun with session state set
             st.rerun()
 
         except Exception as e:
@@ -377,14 +377,17 @@ def require_admin_login(tenant_school_id: int | None = None):
             db.close()
 
     # -------------------------------------------------------
-    # Password Reset Request
+    # 🔄 Password Reset Request (placed *after* login logic)
     # -------------------------------------------------------
     if reset_button:
         st.session_state.show_reset_pw = True
+        st.rerun()
+
+    if st.session_state.get("show_reset_pw", False):
         st.info("🔑 Super Admin authentication required to reset passwords.")
         show_super_admin_reset()
+        return False
 
-    return False
 
 # -----------------------------
 # Student Management
@@ -1349,15 +1352,18 @@ def load_subjects(class_name: str | None = None, school_id: int | None = None):
             school_id = get_current_school_id()
 
         query = db.query(Subject).filter(Subject.school_id == school_id)
-        if class_name:
+
+        # ✅ Safeguard: only strip if it's a string
+        if isinstance(class_name, str) and class_name.strip():
             query = query.filter(Subject.class_name.ilike(class_name.strip()))
+
         return [s.name for s in query.all()]
 
     finally:
         db.close()
 
 def save_subjects(subjects: list, class_name: str | None = None):
-    """Save subjects directly to the database (replaces file storage)."""
+    """Safely save (add/update) subjects without deleting linked ones."""
     db = get_session()
     try:
         school_id = get_current_school_id()
@@ -1369,18 +1375,30 @@ def save_subjects(subjects: list, class_name: str | None = None):
             st.session_state["subject_msg"] = ("error", "⚠️ Please select a valid class before saving subjects.")
             return False
 
-        # Clear old subjects for that class
-        db.query(Subject).filter(
-            Subject.school_id == school_id,
-            Subject.class_name.ilike(class_name.strip())
-        ).delete()
+        # Normalize input
+        new_subjects = sorted(set([str(x).strip() for x in subjects if str(x).strip()]))
 
-        # Add the new ones
-        for s in sorted(set([str(x).strip() for x in subjects if str(x).strip()])):
-            db.add(Subject(name=s, class_name=class_name.strip(), school_id=school_id))
+        # Get existing subjects for this class & school
+        existing_subjects = {
+            s.name.lower(): s
+            for s in db.query(Subject)
+            .filter(
+                Subject.school_id == school_id,
+                Subject.class_name.ilike(class_name.strip())
+            )
+            .all()
+        }
+
+        added = 0
+        for s in new_subjects:
+            if s.lower() not in existing_subjects:
+                db.add(Subject(name=s, class_name=class_name.strip(), school_id=school_id))
+                added += 1
 
         db.commit()
-        st.session_state["subject_msg"] = ("success", f"✅ Subjects saved successfully for {class_name}.")
+
+        msg = f"✅ {added} new subject(s) added for {class_name}." if added > 0 else f"ℹ️ No new subjects to add for {class_name}."
+        st.session_state["subject_msg"] = ("success", msg)
         st.session_state["last_updated_class"] = class_name.strip()
         return True
 
@@ -1533,38 +1551,89 @@ def normalize_code(code: str) -> str:
 
 
 from datetime import datetime
+from datetime import datetime
+from sqlalchemy.orm import Session
+
+from datetime import datetime
+from sqlalchemy.orm import Session
 
 def archive_question(session: Session, question_id: int) -> bool:
-    """Mark a question as archived."""
-    q = session.query(Question).get(question_id)
-    if not q:
+    """Move a question from 'questions' to 'archived_questions'."""
+    try:
+        # ✅ SQLAlchemy 2.x way — .get() moved to session.get()
+        q = session.get(Question, question_id)
+        if not q:
+            return False
+
+        # ✅ Do NOT copy the same id — let ArchivedQuestion auto-increment
+        archived = ArchivedQuestion(
+            class_name=q.class_name,
+            subject=q.subject,
+            subject_id=q.subject_id,
+            question_text=q.question_text,
+            options=q.options,
+            answer=q.answer,
+            created_by=q.created_by,
+            created_at=q.created_at,
+            archived=True,
+            archived_at=datetime.utcnow(),
+            school_id=q.school_id,
+        )
+
+        session.add(archived)
+        session.delete(q)
+        session.commit()
+        return True
+
+    except Exception as e:
+        session.rollback()
+        print(f"❌ Archive error: {e}")
         return False
-    q.archived = True
-    q.archived_at = datetime.utcnow()
-    session.commit()
-    return True
 
 
-def restore_question(session: Session, question_id: int) -> bool:
-    """Restore an archived question back to active."""
-    q = session.query(Question).get(question_id)
-    if not q:
+def restore_question(session: Session, archived_id: int) -> bool:
+    """Move a question back from 'archived_questions' to 'questions'."""
+    try:
+        aq = session.get(ArchivedQuestion, archived_id)
+        if not aq:
+            return False
+
+        restored = Question(
+            class_name=aq.class_name,
+            subject=aq.subject,
+            subject_id=aq.subject_id,
+            question_text=aq.question_text,
+            options=aq.options,
+            answer=aq.answer,
+            created_by=aq.created_by,
+            created_at=aq.created_at,
+            school_id=aq.school_id,
+            archived=False,
+        )
+
+        session.add(restored)
+        session.delete(aq)
+        session.commit()
+        return True
+
+    except Exception as e:
+        session.rollback()
+        print(f"❌ Restore error: {e}")
         return False
-    q.archived = False
-    q.archived_at = None
-    session.commit()
-    return True
 
-def get_archived_questions(session: Session, class_name=None, subject=None):
-    """Return all archived questions (optionally filtered)."""
-    query = session.query(Question).filter(Question.archived.is_(True))
+
+def get_archived_questions(session: Session, class_name=None, subject=None, school_id=None):
+    """Fetch archived questions, with optional filters."""
+    query = session.query(ArchivedQuestion)
 
     if class_name:
-        query = query.filter(Question.class_name == class_name)
+        query = query.filter(ArchivedQuestion.class_name == class_name)
     if subject:
-        query = query.filter(Question.subject == subject)
+        query = query.filter(ArchivedQuestion.subject == subject)
+    if school_id:
+        query = query.filter(ArchivedQuestion.school_id == school_id)
 
-    return query.order_by(Question.archived_at.desc()).all()
+    return query.order_by(ArchivedQuestion.archived_at.desc()).all()
 
 
 def reset_test(student_id: int):
@@ -1795,27 +1864,29 @@ def get_students_by_school(school_id, class_level=None, active_only=True, db=Non
     try:
         query = db.query(Student).filter(Student.school_id == school_id)
 
+        # Match your model field — use class_name, not class_level
         if class_level:
-            query = query.filter(Student.class_level == class_level)
+            query = query.filter(Student.class_name == class_level)
 
-        if active_only and hasattr(Student, "is_active"):
-            query = query.filter(Student.is_active == True)
+        # You can skip active_only unless you later add an `is_active` field
+        students = query.order_by(Student.name.asc()).all()
 
-        students = query.order_by(Student.username.asc()).all()
         return [
             {
                 "id": s.id,
                 "name": s.name,
-                "username": getattr(s, "username", ""),
-                "class_level": getattr(s, "class_level", ""),
-                "access_code": getattr(s, "access_code", ""),
-                "active": getattr(s, "is_active", True)
+                "class_name": s.class_name,
+                "access_code": s.access_code,
+                "can_retake": getattr(s, "can_retake", True),
+                "submitted": getattr(s, "submitted", False)
             }
             for s in students
         ]
+
     except Exception as e:
         print(f"❌ Error fetching students for school {school_id}: {e}")
         return []
+
     finally:
         if close_db:
             db.close()

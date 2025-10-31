@@ -1,10 +1,8 @@
 # ============================================
 # app.py — SmartTest Admin (Full Clean Rewrite)
 # ============================================
-
 import json
 import time
-from datetime import datetime
 import pandas as pd
 import streamlit as st
 
@@ -12,14 +10,12 @@ import streamlit as st
 # Subject & utility helpers (from the helper module you created)
 from ui import (
     CLASSES,
-    df_download_button,
     excel_download_buffer,
-    is_archived,
     load_classes,style_admin_headers
 )
 
 # Models
-from models import Leaderboard, Student,School,Subject
+from models import Leaderboard, Student,School,Subject,ArchivedQuestion
 
 # DB helpers
 from db_helpers import (
@@ -52,8 +48,8 @@ from db_helpers import (
     bulk_add_students_db,
     reset_student_retake_db,
     hash_password,delete_subject,
-    handle_uploaded_questions,
-    ensure_super_admin_exists,
+    handle_uploaded_questions,restore_question,
+    ensure_super_admin_exists,archive_question,
     require_admin_login,assign_admin_to_school,delete_school,
     get_all_submissions_db,generate_unique_school_code,
     get_test_duration,get_current_school_id,get_or_select_school,
@@ -79,7 +75,7 @@ def inject_tab_style():
 
         /* Main tab button styling */
         div[data-testid="stHorizontalBlock"] button {
-            background-color: #fdbb9f !important;     /* Soft neutral base */
+            background-color: #f3f6f6 !important;     /* Soft neutral base */
             color: #0065a2 !important;
             border: none !important;
             border-radius: 50px !important;           /* ✅ Rounded pill look */
@@ -121,6 +117,7 @@ def inject_tab_style():
         </style>
     """, unsafe_allow_html=True)
 
+
 # ==============================
 # Role tabs
 # ==============================
@@ -134,8 +131,8 @@ ROLE_TABS = {
         "📚 Manage Subjects",
         "🔑 Change Password",
         "📤 Upload Questions",
-        "🗑️ Delete Questions ",
-        "🗂️ Archive Questions",
+        "🗑️ Delete Questions & Duration",
+        "🗂️ Archive / Restore Questions",
         "⏱ Set Duration",
         "🏆 View Leaderboard",
         "🔄 Allow Retake",
@@ -151,8 +148,8 @@ ROLE_TABS = {
         "📚 Manage Subjects",
         "🔑 Change Password",
         "📤 Upload Questions",
-        "🗑️ Delete Questions",
-        "🗂️ Archive  Questions",
+        "🗑️ Delete Questions & Duration",
+        "🗂️ Archive / Restore Questions",
         "⏱ Set Duration",
         "🏆 View Leaderboard",
         "🔄 Allow Retake",
@@ -164,8 +161,8 @@ ROLE_TABS = {
         "👥 Manage Students",
         "📚 Manage Subjects",
         "📤 Upload Questions",
-        "🗑️ Delete Questions ",
-        "🗂️ Archive  Questions",
+        "🗑️ Delete Questions & Duration",
+        "🗂️ Archive / Restore Questions",
         "🏆 View Leaderboard",
         "🚪 Logout"
     ],
@@ -285,12 +282,10 @@ def run_admin_mode():
     st.divider()
     st.title("🛠️ SmartTest — Admin Dashboard")
 
+
     # =====================================================
-    # 🧭 ADMIN DASHBOARD — With Multi-School Management
+    # 🏫 Manage Schools (Super Admin Only)
     # =====================================================
-    # -----------------------
-    # 🏫 Manage Schools (Super Admin) + Delete Confirmation
-    # -----------------------
     if selected_tab == "🏫 Manage Schools" and st.session_state.get("admin_role") == "super_admin":
         st.subheader("🏫 Manage Schools")
 
@@ -311,12 +306,8 @@ def run_admin_mode():
         else:
             st.info("No schools found yet.")
 
-        st.markdown("---")
-
-        # -----------------------------
-        # ➕ Add New School Section
-        # -----------------------------
         st.markdown("### ➕ Add New School")
+
         new_school_name = st.text_input("School Name", key="add_school_name")
         new_school_code = st.text_input("School Code (optional)", key="add_school_code")
 
@@ -327,18 +318,22 @@ def run_admin_mode():
                 try:
                     school = add_school(new_school_name.strip(), code=(new_school_code or "").strip())
                     sname = getattr(school, "name", None) or (
-                        school.get("name") if isinstance(school, dict) else "<unknown>")
+                        school.get("name") if isinstance(school, dict) else "<unknown>"
+                    )
                     st.success(f"✅ Added School: {sname}")
+
+                    # Reset fields
+                    st.session_state["add_school_name"] = ""
+                    st.session_state["add_school_code"] = ""
+
+                    time.sleep(0.5)
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Failed to add school: {e}")
 
         st.markdown("---")
-
-        # -----------------------------
-        # 🗑️ Delete School (with Search + Confirm)
-        # -----------------------------
         st.markdown("### 🗑️ Delete School")
+
         if not schools:
             st.info("No schools available to delete.")
         else:
@@ -365,14 +360,12 @@ def run_admin_mode():
                 if "confirm_delete" not in st.session_state:
                     st.session_state.confirm_delete = False
 
-                # Step 1: Show confirmation button
                 if not st.session_state.confirm_delete:
                     if st.button("Delete Selected School", key="delete_school_btn"):
                         st.session_state.confirm_delete = True
                         st.session_state.school_to_delete = selected_school
                         st.rerun()
 
-                # Step 2: Confirmation modal-like section
                 elif st.session_state.confirm_delete:
                     school_info = st.session_state.school_to_delete
                     st.warning(
@@ -402,6 +395,59 @@ def run_admin_mode():
                             st.rerun()
             else:
                 st.warning("No schools match your search.")
+
+    # ======================================================
+    # ➕ Add Student (Per School)
+    # ======================================================
+    elif selected_tab == "➕ Add User":
+        st.session_state["mode"] = "admin"  # 🔒 Always lock admin mode
+        st.subheader("➕ Add Student")
+
+        # ✅ Determine school for this admin
+        school_id = get_current_school_id()
+
+        if admin_role == "super_admin":
+            schools = get_all_schools()
+            if schools:
+                selected_school = st.selectbox(
+                    "🏫 Select School",
+                    schools,
+                    format_func=lambda s: f"{s.name} (Code: {s.code})",
+                    key="add_user_school"
+                )
+                school_id = selected_school.id
+            else:
+                st.warning("⚠️ No schools found. Please create one first.")
+                st.stop()
+
+        elif not school_id:
+            st.error("❌ No school assigned to this admin. Please log in again or assign a school.")
+            st.stop()
+
+        # ✅ Student info input
+        name = st.text_input("Student Name", key="add_name")
+        class_name = st.selectbox("Class", CLASSES, key="add_class")
+
+        if st.button("Add Student", key="add_student_btn"):
+            st.session_state["mode"] = "admin"  # re-lock before db ops
+            if not name.strip():
+                st.error("❌ Please enter a valid student name.")
+            elif not school_id:
+                st.error("❌ Please select or assign a school first.")
+            else:
+                try:
+                    student = add_student_db(name.strip(), class_name, school_id)
+                    if hasattr(student, "name"):
+                        st.success(
+                            f"✅ {student.name} added successfully!\n\n"
+                            f"School: {selected_school.name if admin_role == 'super_admin' else 'Current School'} | "
+                            f"Class: {student.class_name} | "
+                            f"Access Code: {student.access_code}"
+                        )
+                    else:
+                        st.warning("⚠️ Student added, but details not fully returned.")
+                except Exception as e:
+                    st.error(f"❌ Error adding student: {e}")
 
 
     # -----------------------
@@ -491,77 +537,155 @@ def run_admin_mode():
     elif selected_tab == "👥 Manage Students":
         st.subheader("👥 Manage Students")
 
-        school_id = get_current_school_id()
-        # Super admin can filter by school
+        # Determine current role & school context (safe defaults)
+        current_role = st.session_state.get("admin_role", "")
+        current_school_id = get_current_school_id()
+
+        # Super admin may pick a school to manage
         if current_role == "super_admin":
-            schools = get_all_schools()
-            if schools:
-                selected_school = st.selectbox(
-                    "🏫 Select School to View Students",
-                    schools,
-                    format_func=lambda s: f"{s.name} (ID: {s.id})",
-                    key="manage_students_school"
-                )
-                current_school_id = selected_school.id
-            else:
-                st.warning("⚠️ No schools exist. Please create one first.")
+            schools = get_all_schools() or []
+            if not schools:
+                st.warning("⚠️ No schools exist yet. Please create one first.")
                 st.stop()
 
+            selected_school = st.selectbox(
+                "🏫 Select School to View / Manage Students",
+                schools,
+                format_func=lambda s: f"{s.name} (ID: {s.id})",
+                key="manage_students_school"
+            )
+            current_school_id = getattr(selected_school, "id", current_school_id)
+
+        # final guard
         if not current_school_id:
-            st.error("❌ No school assigned.")
+            st.error("❌ No school selected or assigned. Please select a school.")
             st.stop()
 
-        # Load students for that school
-        users = get_students_by_school(current_school_id)
-        if not users:
+        # -- Search / Filter UI --
+        st.markdown("### 🔎 Search & Filter Students")
+        search_q = st.text_input("Search by name, access code or class (leave empty to list all)",
+                                 key="manage_students_search").strip()
+
+        try:
+            students = get_students_by_school(current_school_id) or []
+        except Exception as e:
+            st.error(f"❌ Failed to load students: {e}")
+            st.stop()
+
+        # Normalize students to DataFrame-friendly dicts
+        df = pd.DataFrame(students)
+        if df.empty:
             st.info("No students found for this school.")
+            st.stop()
+
+        # Apply search filter (case-insensitive)
+        if search_q:
+            q = search_q.lower()
+            mask = (
+                    df["name"].astype(str).str.lower().str.contains(q)
+                    | df["access_code"].astype(str).str.lower().str.contains(q)
+                    | df["class_name"].astype(str).str.lower().str.contains(q)
+            )
+            df_filtered = df[mask].copy()
         else:
-            df = pd.DataFrame(users)
-            st.dataframe(df, use_container_width=True)
+            df_filtered = df.copy()
 
-            selected_id = st.selectbox("Select Student ID", df["id"], key="manage_student_select")
-            student = df[df["id"] == selected_id].iloc[0]
+        # Show a compact table
+        st.write(f"Showing {len(df_filtered)} / {len(df)} students")
+        st.dataframe(df_filtered.reset_index(drop=True), use_container_width=True)
 
-            st.write(f"✏️ Editing **{student['name']}** (Class: {student['class_name']})")
-            new_name = st.text_input("Update Name", value=student["name"], key="upd_name")
+        # Select a student to edit
+        st.markdown("### ✏️ Edit Selected Student")
+        if df_filtered.empty:
+            st.info("No students to edit.")
+        else:
+            # Use index selection for stable mapping
+            selected_idx = st.selectbox(
+                "Pick a student to edit",
+                df_filtered.index.tolist(),
+                format_func=lambda
+                    i: f"{df_filtered.loc[i, 'name']} — {df_filtered.loc[i, 'access_code']} ({df_filtered.loc[i, 'class_name']})",
+                key="manage_student_select_idx"
+            )
 
-            # ✅ Handle class name differences safely (spaces/case mismatches)
-            class_name = str(student["class_name"]).strip()
-            if class_name not in CLASSES:
-                normalized_classes = [c.replace(" ", "").lower() for c in CLASSES]
-                normalized_student = class_name.replace(" ", "").lower()
-                index_class = normalized_classes.index(
-                    normalized_student) if normalized_student in normalized_classes else 0
+            student_row = df_filtered.loc[selected_idx]
+            selected_id = int(student_row["id"])
+
+            st.write(f"Editing **{student_row['name']}** (Access: `{student_row['access_code']}`)")
+
+            # Editable fields
+            new_name = st.text_input("Update Name", value=str(student_row.get("name", "")).strip(), key="upd_name")
+            # Class selector with safe index
+            class_raw = str(student_row.get("class_name", "") or "").strip()
+            normalized_classes = [c.strip() for c in CLASSES]
+            try:
+                class_index = normalized_classes.index(class_raw) if class_raw in normalized_classes else 0
+            except Exception:
+                class_index = 0
+            new_class = st.selectbox("Update Class", normalized_classes, index=class_index, key="upd_class")
+
+            # Subject (optional) — fall back to SUBJECTS list if available
+            try:
+                subjects = load_subjects()
+            except Exception:
+                subjects = SUBJECTS if "SUBJECTS" in globals() else []
+            subject_raw = str(student_row.get("subject", "") or "").strip()
+            if subjects:
+                try:
+                    subj_index = subjects.index(subject_raw) if subject_raw in subjects else 0
+                except Exception:
+                    subj_index = 0
+                new_subject = st.selectbox("Update Subject (optional)", subjects, index=subj_index, key="upd_subject")
             else:
-                index_class = CLASSES.index(class_name)
+                new_subject = st.text_input("Subject (optional)", value=subject_raw, key="upd_subject_free")
 
-            new_class = st.selectbox("Update Class", CLASSES, index=index_class, key="upd_class")
+            # Two-column actions
+            col1, col2 = st.columns([1, 1])
 
-            # ✅ Handle subject name differences safely (optional subject update)
-            subject_name = str(student.get("subject", "")).strip()
-            if subject_name not in SUBJECTS:
-                normalized_subjects = [s.replace(" ", "").lower() for s in SUBJECTS]
-                normalized_student_sub = subject_name.replace(" ", "").lower()
-                index_subject = normalized_subjects.index(
-                    normalized_student_sub) if normalized_student_sub in normalized_subjects else 0
-            else:
-                index_subject = SUBJECTS.index(subject_name)
-
-            new_subject = st.selectbox("Update Subject", SUBJECTS, index=index_subject, key="upd_subject")
-
-            col1, col2 = st.columns(2)
             with col1:
                 if st.button("💾 Save Changes", key="save_student_changes"):
-                    update_student_db(selected_id, new_name.strip(), new_class, new_subject)
-                    st.success("✅ Student updated successfully!")
-                    st.rerun()
-            with col2:
-                if st.button("🗑️ Delete Student", key="delete_student_btn"):
-                    delete_student_db(selected_id)
-                    st.warning("⚠️ Student deleted.")
-                    st.rerun()
+                    try:
+                        update_student_db(selected_id, new_name.strip(), new_class, new_subject)
+                        st.success("✅ Student updated successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Failed to update student: {e}")
 
-            df_download_button(df, "⬇️ Download Students CSV", "students_backup.csv")
+            # Delete flow with explicit confirmation
+            with col2:
+                if "delete_confirm_for" not in st.session_state:
+                    st.session_state.delete_confirm_for = None
+
+                if st.session_state.delete_confirm_for != selected_id:
+                    if st.button("🗑️ Delete Student", key=f"delete_student_btn_{selected_id}"):
+                        # set pending delete
+                        st.session_state.delete_confirm_for = selected_id
+                        st.rerun()
+                else:
+                    st.warning("⚠️ You're about to delete this student permanently. This action cannot be undone.")
+                    confirm_col1, confirm_col2 = st.columns(2)
+                    with confirm_col1:
+                        if st.button("✅ Confirm Delete", key=f"confirm_delete_yes_{selected_id}"):
+                            try:
+                                delete_student_db(selected_id)
+                                st.success("✅ Student deleted.")
+                                st.session_state.delete_confirm_for = None
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Could not delete student: {e}")
+                                st.session_state.delete_confirm_for = None
+                    with confirm_col2:
+                        if st.button("❌ Cancel", key=f"confirm_delete_no_{selected_id}"):
+                            st.info("Deletion cancelled.")
+                            st.session_state.delete_confirm_for = None
+                            st.rerun()
+
+        # Export the currently shown list
+        st.markdown("---")
+        if not df_filtered.empty:
+            csv = df_filtered.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download Shown Students (CSV)", csv, f"students_school_{current_school_id}.csv",
+                               "text/csv")
 
     # -----------------------
     # 🛡️ Manage Admins (super_admin only)
@@ -791,216 +915,192 @@ def run_admin_mode():
             except Exception as e:
                 st.error(f"❌ Upload failed: {e}")
 
+
+    # =====================================================
+    # 🗑️ DELETE QUESTIONS & DURATION
+    # =====================================================
     elif selected_tab == "🗑️ Delete Questions & Duration":
         st.subheader("🗑️ Delete Question Sets or Subjects")
 
-        cls = st.selectbox("Select Class", CLASSES, key="delete_class")
-
+        # Resolve school_id robustly
         school_id = (
                 st.session_state.get("school_id")
                 or st.session_state.get("admin_school_id")
                 or st.session_state.get("current_school_id")
+                or get_current_school_id()
         )
 
-        sub_list = load_subjects(school_id) if callable(load_subjects) else []
-        sub = st.selectbox("Select Subject", sub_list, key="delete_subject")
-
         if not school_id:
-            st.warning("⚠️ No school selected. Please assign a school before deleting.")
+            st.warning("⚠️ No school selected. Please assign/select a school first.")
             st.stop()
 
-        # -------------------------------
-        # Delete all questions for subject
-        # -------------------------------
+        cls = st.selectbox(
+            "Select Class",
+            CLASSES,
+            key=f"delete_class_select_{school_id}"
+        )
+
+        # ✅ Load subjects safely
+        sub_list = load_subjects(cls, school_id) if callable(load_subjects) else (
+            load_subjects() if "load_subjects" in globals() else []
+        )
+
+        sub = st.selectbox(
+            "Select Subject",
+            sub_list,
+            key=f"delete_subject_select_{school_id}_{cls}"
+        )
+
         if cls and sub:
             from sqlalchemy import func
             db = get_session()
             try:
-                existing = db.query(Question).filter(
+                # Count existing (scoped to school)
+                existing_count = db.query(Question).filter(
                     func.lower(Question.class_name) == cls.strip().lower(),
                     func.lower(Question.subject) == sub.strip().lower(),
                     Question.school_id == school_id
-                ).all()
+                ).count()
 
-                if existing:
-                    st.info(f"📚 Found {len(existing)} questions for {cls} - {sub}")
-                    confirm = st.checkbox(f"⚠️ Confirm deletion of all questions for {cls} - {sub}",
-                                          key="confirm_delete_questions")
+                if existing_count:
+                    st.info(f"📚 Found {existing_count} questions for {cls} - {sub} (School ID: {school_id})")
 
-                    if st.button("🗑️ Delete ALL Questions", key="delete_all_questions_btn"):
+                    confirm = st.checkbox(
+                        f"⚠️ Confirm deletion of all questions for {cls} - {sub}",
+                        key=f"confirm_delete_questions_{school_id}_{cls}_{sub}"
+                    )
+
+                    if st.button(
+                            "🗑️ Delete ALL Questions",
+                            key=f"delete_all_questions_btn_{school_id}_{cls}_{sub}"
+                    ):
                         if not confirm:
                             st.error("❌ Please confirm before deleting.")
                         else:
-                            deleted_count = (
-                                db.query(Question)
-                                .filter(
+                            try:
+                                deleted_count = db.query(Question).filter(
                                     func.lower(Question.class_name) == cls.strip().lower(),
                                     func.lower(Question.subject) == sub.strip().lower(),
                                     Question.school_id == school_id
-                                )
-                                .delete(synchronize_session=False)
-                            )
-                            db.commit()
-                            st.success(f"✅ Deleted {deleted_count} questions for {cls} - {sub}")
-                            st.cache_data.clear()
-                            st.rerun()
+                                ).delete(synchronize_session=False)
+                                db.commit()
+                                st.success(f"✅ Deleted {deleted_count} questions for {cls} - {sub}")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                db.rollback()
+                                st.error(f"❌ Error deleting questions: {e}")
                 else:
-                    st.warning(f"No questions found for {cls} - {sub} in this school.")
-            except Exception as e:
-                db.rollback()
-                st.error(f"❌ Error deleting questions: {e}")
+                    st.warning(f"No questions found for {cls} - {sub} in this school (ID: {school_id}).")
             finally:
                 db.close()
 
-        st.markdown("---")
 
-        # -------------------------------
-        # Delete the subject itself
-        # -------------------------------
-        st.subheader("🗑️ Delete Subject")
-        confirm_sub_del = st.checkbox(f"⚠️ Confirm deleting subject '{sub}' from {cls}", key="confirm_delete_subject")
-        if st.button("🗑️ Delete Subject", key="delete_subject_btn"):
-            if not confirm_sub_del:
-                st.error("❌ Please confirm before deleting the subject.")
-            else:
-                deleted = delete_subject(sub, school_id, cls)
-
-                if deleted:
-                    st.success(f"✅ Deleted subject '{sub}' successfully.")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.warning(f"No subject named '{sub}' found or deletion failed.")
-
-        # ==============================
-    # 🗂️ Archive / Restore Questions
-    # ==============================
+    # =====================================================
+    # 🗂️ ARCHIVE / RESTORE QUESTIONS
+    # =====================================================
     elif selected_tab == "🗂️ Archive / Restore Questions":
         st.subheader("🗂️ Archive or Restore Questions")
-        cls = st.selectbox("Select Class", CLASSES, key="archive_cls")
-        sub_list = load_subjects()
-        sub = st.selectbox("Select Subject", sub_list, key="archive_sub")
-        show_archived = st.checkbox("👁️ Show Archived Questions", value=False, key="archive_show")
 
-        if cls and sub:
-            questions = get_questions_db(cls, sub)
-            total = len(questions)
-            total_archived = sum(1 for q in questions if is_archived(q))
-            total_active = total - total_archived
-            st.info(f"📊 Total: {total} | ✅ Active: {total_active} | 💤 Archived: {total_archived}")
-            filtered = [q for q in questions if is_archived(q) == show_archived]
+        db = get_session()
+        try:
+            # -----------------------------
+            # Identify current school
+            # -----------------------------
+            school_id = (
+                    st.session_state.get("school_id")
+                    or st.session_state.get("admin_school_id")
+                    or st.session_state.get("current_school_id")
+                    or get_current_school_id()
+            )
+            if not school_id:
+                st.warning("⚠️ No school selected.")
+                st.stop()
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🗑️ Archive ALL Questions", key="bulk_archive_btn"):
-                    db = get_session()
-                    try:
-                        updated = (
-                            db.query(Question)
-                            .filter(
-                                Question.class_name == cls,
-                                Question.subject == sub,
-                                Question.archived.is_(False),
-                            )
-                            .update({"archived": True, "archived_at": datetime.now()})
-                        )
-                        db.commit()
-                        st.success(f"🗃️ Archived {updated} questions.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Failed to archive: {e}")
-                    finally:
-                        db.close()
+            cls = st.selectbox("Select Class", CLASSES, key=f"archive_cls_{school_id}")
 
-            with col2:
-                if st.button("♻️ Restore ALL Archived", key="bulk_restore_btn"):
-                    db = get_session()
-                    try:
-                        updated = (
-                            db.query(Question)
-                            .filter(
-                                Question.class_name == cls,
-                                Question.subject == sub,
-                                Question.archived.is_(True),
-                            )
-                            .update({"archived": False, "archived_at": None})
-                        )
-                        db.commit()
-                        st.success(f"♻️ Restored {updated} questions.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Failed to restore: {e}")
-                    finally:
-                        db.close()
-
-            st.markdown("---")
-            if not filtered:
-                st.warning(f"No {'archived' if show_archived else 'active'} questions for {cls} - {sub}")
+            # Load subject list
+            if callable(load_subjects):
+                sub_list = load_subjects(school_id)
             else:
-                for idx, q in enumerate(filtered):
-                    q_id = getattr(q, "id", idx)
-                    q_text = getattr(q, "question_text", "") or ""
-                    q_answer = getattr(q, "correct_answer", "") or getattr(q, "answer", "")
-                    q_options = getattr(q, "options", []) or []
-                    q_archived = is_archived(q)
-                    label = "♻️ Restore" if q_archived else "🗃️ Archive"
-                    exp_title = f"Q{q_id}: {q_text[:60]}..." + (" 💤 [Archived]" if q_archived else "")
-                    with st.expander(exp_title):
-                        st.write(f"**Question:** {q_text}")
-                        st.write(f"**Options:** {q_options}")
-                        st.write(f"**Answer:** {q_answer}")
-                        if st.button(label, key=f"archive_btn_{q_id}_{idx}"):
-                            db = get_session()
-                            try:
-                                q_obj = db.query(Question).get(q_id)
-                                if not q_obj:
-                                    st.error(f"Question {q_id} not found.")
-                                else:
-                                    if q_archived:
-                                        q_obj.archived = False
-                                        q_obj.archived_at = None
-                                        st.success(f"♻️ Question {q_id} restored.")
-                                    else:
-                                        q_obj.archived = True
-                                        q_obj.archived_at = datetime.utcnow()
-                                        st.success(f"🗃️ Question {q_id} archived.")
-                                    db.commit()
-                                    st.rerun()
-                            finally:
-                                db.close()
+                sub_list = []
 
-            # Download archived globally
-            db = get_session()
-            try:
-                archived_all = db.query(Question).filter(Question.archived.is_(True)).order_by(
-                    Question.class_name.asc(),
-                    Question.subject.asc(),
-                    Question.id.asc()
-                ).all()
-                if archived_all:
-                    data_all = [
-                        {
-                            "ID": q.id,
-                            "Class": q.class_name,
-                            "Subject": q.subject,
-                            "Question": q.question_text,
-                            "Answer": getattr(q, "correct_answer", "") or getattr(q, "answer", ""),
-                            "Options": ", ".join(q.options) if getattr(q, "options", None) else "",
-                            "Archived At": q.archived_at.strftime("%Y-%m-%d %H:%M:%S") if q.archived_at else ""
-                        }
-                        for q in archived_all
-                    ]
-                    df_all = pd.DataFrame(data_all)
-                    st.download_button(
-                        "📥 Download ALL Archived Questions (CSV)",
-                        df_all.to_csv(index=False).encode("utf-8"),
-                        "all_archived_questions.csv",
-                        "text/csv"
+            sub = st.selectbox("Select Subject", sub_list, key=f"archive_sub_{school_id}")
+            show_archived = st.checkbox("👁️ Show Archived Questions", value=False)
+
+            if cls and sub:
+                from sqlalchemy import func
+
+                if not show_archived:
+                    # Active questions
+                    questions = (
+                        db.query(Question)
+                        .filter(
+                            func.lower(Question.class_name) == cls.lower(),
+                            func.lower(Question.subject) == sub.lower(),
+                            Question.school_id == school_id
+                        )
+                        .order_by(Question.id.asc())
+                        .all()
                     )
+                    st.info(f"Showing ACTIVE questions for {cls} - {sub}")
+
+                    for q in questions:
+                        with st.expander(f"Q{q.id}: {q.question_text[:70]}..."):
+                            st.write(f"**Answer:** {q.answer}")
+                            if st.button(f"🗃️ Archive Q{q.id}", key=f"archive_{q.id}"):
+                                if archive_question(db, q.id):
+                                    st.success(f"✅ Archived Q{q.id}")
+                                    st.rerun()
+
                 else:
-                    st.info("No archived questions found globally.")
-            finally:
-                db.close()
+                    # Archived questions
+                    archived = (
+                        db.query(ArchivedQuestion)
+                        .filter(
+                            func.lower(ArchivedQuestion.class_name) == cls.lower(),
+                            func.lower(ArchivedQuestion.subject) == sub.lower(),
+                            ArchivedQuestion.school_id == school_id
+                        )
+                        .order_by(ArchivedQuestion.archived_at.desc())
+                        .all()
+                    )
+                    st.info(f"Showing ARCHIVED questions for {cls} - {sub}")
+
+                    for aq in archived:
+                        with st.expander(f"🗃️ Q{aq.id}: {aq.question_text[:70]}..."):
+                            st.write(f"**Answer:** {aq.answer}")
+                            st.write(f"**Archived At:** {aq.archived_at}")
+                            if st.button(f"♻️ Restore Q{aq.id}", key=f"restore_{aq.id}"):
+                                if restore_question(db, aq.id):
+                                    st.success(f"♻️ Restored Q{aq.id}")
+                                    st.rerun()
+
+            # ===================
+            # Download Archived CSV
+            # ===================
+            all_archived = db.query(ArchivedQuestion).filter(ArchivedQuestion.school_id == school_id).all()
+            if all_archived:
+                df = pd.DataFrame([
+                    {
+                        "Class": q.class_name,
+                        "Subject": q.subject,
+                        "Question": q.question_text,
+                        "Answer": q.answer,
+                        "Archived At": q.archived_at.strftime("%Y-%m-%d %H:%M:%S") if q.archived_at else ""
+                    }
+                    for q in all_archived
+                ])
+                st.download_button(
+                    "📥 Download Archived Questions (CSV)",
+                    df.to_csv(index=False).encode("utf-8"),
+                    f"archived_questions_school_{school_id}.csv",
+                    "text/csv",
+                )
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
+        finally:
+            db.close()
 
     # =======================================
     # ⏱️ Stand-alone Duration Configuration
@@ -1151,22 +1251,30 @@ def run_admin_mode():
                         set_retake_db(code, subj, allow)
                     st.success("✅ Retake permissions updated for all selected subjects.")
 
+
     # -----------------------
     # 🖨️ Generate Access Slips
     # -----------------------
-    elif selected_tab == "🖨️ Generate Access Slips":
+    elif selected_tab == "🖨️ Generate Slips":
         st.subheader("🖨️ Generate Student Access Slips")
-        users = get_users()
+
+        # ✅ Use the same role/school logic as other tabs
+        current_role = st.session_state.get("admin_role", "")
+        current_school_id = st.session_state.get("admin_school_id", None)
+
+        if current_role == "super_admin":
+            users = get_users()
+        else:
+            users = get_users(school_id=current_school_id)
+
+        # 🧠 Add these debug lines right here:
+
         if not users:
-            st.info("No students found.")
+            st.info("No students found for this school.")
         else:
             df = pd.DataFrame(users.values())
             st.dataframe(df, use_container_width=True)
-            if st.button("📄 Generate Access Slips for All Students", key="generate_slips_btn"):
-                slips_df = df[["name", "class_name", "access_code"]]
-                csv_data = slips_df.to_csv(index=False).encode("utf-8")
-                st.download_button("⬇️ Download Access Slips CSV", csv_data, "access_slips.csv", "text/csv")
-                st.success(f"✅ Generated {len(slips_df)} access slips successfully!")
+            ...
 
     # -----------------------
     # ♻️ Reset Tests (per student per school)

@@ -26,7 +26,7 @@ def make_connect_args(url):
         return {"check_same_thread": False}
     return {
         "sslmode": "require",
-        "connect_timeout": 10,
+        "connect_timeout": 20,
         "keepalives": 1,
         "keepalives_idle": 30,
         "keepalives_interval": 10,
@@ -98,6 +98,51 @@ def test_db_connection():
     except OperationalError as e:
         print(f"❌ Database connection failed: {e}")
         return False
+# =====================================
+# Ensure Default School & Super Admin (for SQLite fallback)
+# =====================================
+def ensure_default_school_and_admin():
+    """Create a default school and super_admin when using local SQLite DB."""
+    if not str(engine.url).startswith("sqlite"):
+        return  # Only run this when in SQLite fallback mode
+
+    from models import School, User  # adjust to your model names
+    from db_helpers import hash_password  # adjust if your hash function lives elsewhere
+
+    db = get_session()
+    try:
+        # Ensure tables exist
+        Base.metadata.create_all(bind=engine)
+
+        # Check for at least one school
+        school = db.query(School).first()
+        if not school:
+            school = School(name="Default School", code="DEF001")
+            db.add(school)
+            db.commit()
+            print("🏫 Created Default School")
+
+        # Check for at least one super_admin
+        admin = db.query(User).filter_by(role="super_admin").first()
+        if not admin:
+            admin = User(
+                username="super_admin",
+                role="super_admin",
+                school_id=school.id,
+                password_hash=hash_password("admin123"),
+            )
+            db.add(admin)
+            db.commit()
+            print("👑 Created super_admin (username: super_admin, password: admin123)")
+
+    except Exception as e:
+        print("⚠️ Failed to ensure default data:", e)
+    finally:
+        db.close()
+
+
+# Run automatically when using SQLite
+ensure_default_school_and_admin()
 
 
 # =====================================

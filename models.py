@@ -47,6 +47,9 @@ class School(Base):
     test_results = relationship("TestResult", back_populates="school", cascade="all, delete-orphan")
     subjects = relationship("Subject", back_populates="school", cascade="all, delete-orphan")
     durations = relationship("TestDuration", back_populates="school")
+    archived_questions = relationship("ArchivedQuestion", back_populates="school", cascade="all, delete-orphan")
+
+
 # ================================================
 # STUDENT
 # ================================================
@@ -99,6 +102,7 @@ class User(Base, TenantMixin):
 
     # Relationships
     questions = relationship("Question", back_populates="creator", cascade="all, delete-orphan")
+    archived_questions = relationship("ArchivedQuestion", back_populates="creator")  # ✅ added
     school = relationship("School", back_populates="users")
 
 # ================================================
@@ -114,6 +118,7 @@ class Subject(Base, TenantMixin):
 
     # Relationships
     questions = relationship("Question", back_populates="subject_rel", cascade="all, delete-orphan")
+    archived_questions = relationship("ArchivedQuestion", back_populates="subject_rel")  # ✅ added
     school = relationship("School", back_populates="subjects")
 
 # ================================================
@@ -269,3 +274,26 @@ class TestDuration(Base):
     # optional relationship for clarity
     school = relationship("School", back_populates="durations", lazy="joined")
 
+# ================================================
+# ARCHIVED QUESTIONS
+# ================================================
+class ArchivedQuestion(Base, TenantMixin):
+    __tablename__ = "archived_questions"
+
+    id = Column(Integer, primary_key=True)
+    class_name = Column(String(50), nullable=False)
+    subject = Column(String(100), nullable=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=True)
+    question_text = Column(Text, nullable=False)
+    options = Column(JSON, nullable=False)
+    answer = Column(String(255), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True))
+    archived = Column(Boolean, default=True)
+    archived_at = Column(DateTime(timezone=True), server_default=func.now())
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+
+    # Relationships
+    creator = relationship("User", back_populates="archived_questions", foreign_keys=[created_by])
+    school = relationship("School", back_populates="archived_questions")
+    subject_rel = relationship("Subject", back_populates="archived_questions", foreign_keys=[subject_id])
