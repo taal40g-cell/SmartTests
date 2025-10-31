@@ -131,7 +131,7 @@ ROLE_TABS = {
         "📚 Manage Subjects",
         "🔑 Change Password",
         "📤 Upload Questions",
-        "🗑️ Delete Questions & Duration",
+        "🗑️ Delete Questions",
         "🗂️ Archive / Restore Questions",
         "⏱ Set Duration",
         "🏆 View Leaderboard",
@@ -148,7 +148,7 @@ ROLE_TABS = {
         "📚 Manage Subjects",
         "🔑 Change Password",
         "📤 Upload Questions",
-        "🗑️ Delete Questions & Duration",
+        "🗑️ Delete Questions",
         "🗂️ Archive / Restore Questions",
         "⏱ Set Duration",
         "🏆 View Leaderboard",
@@ -161,7 +161,7 @@ ROLE_TABS = {
         "👥 Manage Students",
         "📚 Manage Subjects",
         "📤 Upload Questions",
-        "🗑️ Delete Questions & Duration",
+        "🗑️ Delete Questions",
         "🗂️ Archive / Restore Questions",
         "🏆 View Leaderboard",
         "🚪 Logout"
@@ -817,7 +817,11 @@ def run_admin_mode():
     # -----------------------
     elif selected_tab == "🔑 Change Password":
         st.subheader("Change Admin Password")
+
         current_user = st.session_state.get("admin_username")
+        current_role = st.session_state.get("admin_role", "")
+        current_school_id = st.session_state.get("admin_school_id")
+
         old_pw = st.text_input("Current Password", type="password", key="old_pw")
         new_pw = st.text_input("New Password", type="password", key="new_pw")
         confirm_pw = st.text_input("Confirm New Password", type="password", key="confirm_pw")
@@ -828,9 +832,9 @@ def run_admin_mode():
             elif new_pw != confirm_pw:
                 st.error("❌ New passwords do not match.")
             else:
-                admin = verify_admin(current_user, old_pw)
+                admin = verify_admin(current_user, old_pw, school_id=current_school_id)
                 if admin:
-                    success = update_admin_password(current_user, new_pw)
+                    success = update_admin_password(current_user, new_pw, school_id=current_school_id)
                     if success:
                         st.success("✅ Password updated successfully.")
                         for i in range(3, 0, -1):
@@ -919,7 +923,7 @@ def run_admin_mode():
     # =====================================================
     # 🗑️ DELETE QUESTIONS & DURATION
     # =====================================================
-    elif selected_tab == "🗑️ Delete Questions & Duration":
+    elif selected_tab == "🗑️ Delete Questions":
         st.subheader("🗑️ Delete Question Sets or Subjects")
 
         # Resolve school_id robustly
@@ -1257,25 +1261,48 @@ def run_admin_mode():
     # -----------------------
     elif selected_tab == "🖨️ Generate Slips":
         st.subheader("🖨️ Generate Student Access Slips")
-
-        # ✅ Use the same role/school logic as other tabs
+        # ✅ Role and school logic
         current_role = st.session_state.get("admin_role", "")
         current_school_id = st.session_state.get("admin_school_id", None)
 
+        # Fetch users by role
         if current_role == "super_admin":
             users = get_users()
         else:
             users = get_users(school_id=current_school_id)
 
-        # 🧠 Add these debug lines right here:
+        # Debugging (optional — uncomment if needed)
+        # st.write("DEBUG role:", current_role)
+        # st.write("DEBUG school_id:", current_school_id)
+        # st.write("DEBUG users count:", len(users))
 
         if not users:
             st.info("No students found for this school.")
         else:
             df = pd.DataFrame(users.values())
-            st.dataframe(df, use_container_width=True)
-            ...
 
+            # Clean up columns for clarity
+            display_cols = ["name", "class_name", "access_code"]
+            df_display = df[display_cols].rename(columns={
+                "name": "Student Name",
+                "class_name": "Class",
+                "access_code": "Access Code"
+            })
+
+            # Show table
+            st.dataframe(df_display, use_container_width=True)
+
+            # 🧾 Generate downloadable CSV
+            csv_data = df_display.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                label="⬇️ Download Access Slips (CSV)",
+                data=csv_data,
+                file_name=f"access_slips_{current_school_id or 'all'}.csv",
+                mime="text/csv"
+            )
+
+            st.success(f"✅ Generated {len(df_display)} access slips successfully!")
     # -----------------------
     # ♻️ Reset Tests (per student per school)
     # -----------------------
