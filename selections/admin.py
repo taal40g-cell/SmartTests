@@ -15,25 +15,22 @@ from ui import (
 )
 
 # Models
-from models import Leaderboard, Student,School,Subject,ArchivedQuestion
+from models import Leaderboard, Student,School,Subject,ArchivedQuestion,SubjectiveQuestion
 
 # DB helpers
 from db_helpers import (
     get_session,
     Question,
-    add_admin,
     get_all_admins,
     set_admin,
     verify_admin,
     add_student_db,
-    save_questions_db,
     get_student_by_access_code_db,
     add_question_db,
     reset_test,
     get_questions_db,
     update_student_db,
     delete_student_db,
-    get_submission_db,
     get_users,
     clear_students_db,
     load_subjects,
@@ -41,18 +38,15 @@ from db_helpers import (
     clear_questions_db,
     clear_submissions_db,
     set_retake_db,
-    preview_questions_db,
-    count_questions_db,
     get_retake_db,
     update_admin_password,
     bulk_add_students_db,
-    reset_student_retake_db,
-    hash_password,delete_subject,
+    delete_subject,
     handle_uploaded_questions,restore_question,
     ensure_super_admin_exists,archive_question,
     require_admin_login,assign_admin_to_school,delete_school,
-    get_all_submissions_db,generate_unique_school_code,
-    get_test_duration,get_current_school_id,get_or_select_school,
+    get_all_submissions_db,
+    get_test_duration,get_current_school_id,
     set_test_duration,get_students_by_school,add_school,get_all_schools
 )
 
@@ -61,7 +55,7 @@ def inject_tab_style():
     st.markdown("""
         <style>
         /* ======================================
-           🌸 Sleek Rounded Pink Admin Tabs
+           🌸 Sleek  Admin Tabs
         ====================================== */
 
         /* Tab container alignment */
@@ -131,6 +125,7 @@ ROLE_TABS = {
         "📚 Manage Subjects",
         "🔑 Change Password",
         "📤 Upload Questions",
+        "✍️ Add Subjective Questions",
         "🗑️ Delete Questions",
         "🗂️ Archive / Restore Questions",
         "⏱ Set Duration",
@@ -919,6 +914,156 @@ def run_admin_mode():
             except Exception as e:
                 st.error(f"❌ Upload failed: {e}")
 
+    # ============================================
+    # ✍️ Add Subjective Questions
+    # ============================================
+    elif selected_tab == "✍️ Add Subjective Questions":
+        st.subheader("✍️ Add Subjective Questions")
+
+        # --- School Selection ---
+        if admin_role == "super_admin":
+            schools = get_all_schools()
+            if not schools:
+                st.warning("⚠️ No schools exist yet. Please create one first.")
+                st.stop()
+            selected_school = st.selectbox(
+                "🏫 Select School",
+                schools,
+                format_func=lambda s: f"{s.name} ({s.code})"
+            )
+            school_id = selected_school.id
+        else:
+            school_id = get_current_school_id()
+            if not school_id:
+                st.error("❌ No school assigned. Please log in again.")
+                st.stop()
+
+        # --- Class & Subject Selection ---
+        class_name = st.selectbox("Select Class", CLASSES)
+        subjects = load_subjects(school_id=school_id)  # make sure this accepts school_id
+        if not subjects:
+            st.info("No subjects found for this school.")
+            st.stop()
+        subject = st.selectbox("Select Subject", subjects)
+
+        # --- Option to Add New Subject ---
+        with st.expander("➕ Add New Subject"):
+            new_subject = st.text_input("Enter new subject name")
+            new_class = st.selectbox("Select Class for Subject", CLASSES, key="add_subj_class")
+            if st.button("💾 Save New Subject"):
+                if not new_subject.strip():
+                    st.error("Please enter a subject name.")
+                else:
+                    try:
+                        db = get_session()
+                        existing = (
+                            db.query(Subject)
+                            .filter_by(name=new_subject.strip(), class_name=new_class, school_id=school_id)
+                            .first()
+                        )
+                        if existing:
+                            st.warning("⚠️ Subject already exists for this class.")
+                        else:
+                            new_sub = Subject(
+                                school_id=school_id,
+                                name=new_subject.strip(),
+                                class_name=new_class
+                            )
+                            db.add(new_sub)
+                            db.commit()
+                            st.success(f"✅ Added new subject '{new_subject.strip()}' for {new_class}")
+                            st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"❌ Error adding subject: {e}")
+                    finally:
+                        db.close()
+
+        # --- Single Question Input ---
+        st.markdown("### ➕ Add Single Question")
+        question_text = st.text_area("📝 Question Text")
+        marks = st.number_input("Marks", min_value=1, max_value=50, value=10)
+
+        if st.button("💾 Save Single Question"):
+            if not question_text.strip():
+                st.error("Please enter a question.")
+            else:
+                try:
+                    db = get_session()
+                    new_q = SubjectiveQuestion(
+                        school_id=school_id,
+                        class_name=class_name,
+                        subject=subject,
+                        question_text=question_text.strip(),
+                        marks=marks
+                    )
+                    db.add(new_q)
+                    db.commit()
+                    st.success(f"✅ Added subjective question for {class_name} - {subject}")
+                    st.rerun()
+                except Exception as e:
+                    db.rollback()
+                    st.error(f"❌ Error: {e}")
+                finally:
+                    db.close()
+
+        # --- Bulk Upload ---
+        st.markdown("### 📤 Bulk Upload Questions (JSON)")
+        uploaded_file = st.file_uploader("Upload JSON file", type=["json"], key="subj_upload_file")
+        if uploaded_file and st.button("✅ Upload Now", key="subj_upload_btn"):
+            try:
+                data = json.load(uploaded_file)
+                if not isinstance(data, list):
+                    st.error("⚠️ JSON must be a list of question objects.")
+                    st.stop()
+
+                cleaned = []
+                for idx, q in enumerate(data, start=1):
+                    if not all(k in q for k in ["question", "marks"]):
+                        st.error(f"⚠️ Question {idx} missing required fields.")
+                        st.stop()
+                    cleaned.append({
+                        "question_text": q["question"].strip(),
+                        "marks": int(q["marks"])
+                    })
+
+                db = get_session()
+                for item in cleaned:
+                    new_q = SubjectiveQuestion(
+                        school_id=school_id,
+                        class_name=class_name,
+                        subject=subject,
+                        question_text=item["question_text"],
+                        marks=item["marks"]
+                    )
+                    db.add(new_q)
+                db.commit()
+                st.success(f"🎯 Uploaded {len(cleaned)} subjective questions for {class_name} - {subject}")
+                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"❌ Upload failed: {e}")
+            finally:
+                db.close()
+
+        # --- Existing Questions ---
+        st.markdown("---")
+        st.subheader("📚 Existing Subjective Questions")
+        db = get_session()
+        existing = (
+            db.query(SubjectiveQuestion)
+            .filter_by(school_id=school_id)
+            .order_by(SubjectiveQuestion.created_at.desc())
+            .all()
+        )
+
+        if existing:
+            for q in existing:
+                st.markdown(f"**{q.class_name} - {q.subject}**")
+                st.write(q.question_text)
+                st.caption(f"Marks: {q.marks} | Added on {q.created_at.strftime('%Y-%m-%d')}")
+        else:
+            st.info("No subjective questions yet.")
+        db.close()
 
     # =====================================================
     # 🗑️ DELETE QUESTIONS & DURATION

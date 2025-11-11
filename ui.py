@@ -4,6 +4,7 @@ import base64
 import json
 import pandas as pd
 import io
+import time
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -11,14 +12,11 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from datetime import datetime
+from helpers import get_subjective_questions, submit_subjective_answer
+from models import Subject,SubjectiveSubmission
+from database import get_session
 
 
-# -----------------------------
-# Cached function to read & encode image
-# -----------------------------
-# -----------------------------
-# Cached function to read & encode image
-# -----------------------------
 # -----------------------------
 # Cached function to read & encode image
 # -----------------------------
@@ -201,7 +199,6 @@ def render_test(questions, subject):
 
 
 
-
 def generate_pdf(name, class_name, subject, correct, total, percent, details,
                  school_name=None, school_id=None, logo_path=None):
     """
@@ -312,14 +309,6 @@ def generate_pdf(name, class_name, subject, correct, total, percent, details,
     return buffer.getvalue()
 
 
-def is_archived(q):
-    """Safely return True/False if a question is archived."""
-    if isinstance(q, dict):
-        return q.get("archived", False)
-    return getattr(q, "archived", False)
-
-
-
 
 # ==============================
 # Constants
@@ -379,3 +368,74 @@ def style_admin_headers():
         }
         </style>
     """, unsafe_allow_html=True)
+
+
+
+# ==============================================
+# 🎓 STUDENT: SUBJECTIVE TEST SECTION
+# ==============================================
+def run_subjective_test_ui():
+    st.subheader("📝 Subjective Test Section")
+
+    school_id = st.session_state.get("school_id")
+    student_id = st.session_state.get("student_id")
+    access_code = st.session_state.get("access_code")
+    student_name = st.session_state.get("student_name")
+
+    if not all([school_id, student_id]):
+        st.warning("⚠️ Please log in properly to continue.")
+        st.stop()
+
+    cls = st.selectbox("Select Class", CLASSES, key="subj_cls")
+    subject = st.selectbox("Select Subject", Subject, key="subj_sub")
+
+    if st.button("📂 Load Questions"):
+        questions = get_subjective_questions(school_id, cls, subject)
+
+        if not questions:
+            st.info("No subjective questions uploaded for this class and subject yet.")
+            return
+
+        st.markdown("### ✍️ Answer the questions below:")
+        answers = {}
+        for q in questions:
+            st.markdown(f"**Q{q.id}. {q.question_text}** ({q.marks} marks)")
+            answers[q.id] = st.text_area(f"Answer for Q{q.id}", height=150, key=f"ans_{q.id}")
+
+        if st.button("📤 Submit Answers"):
+            ok = submit_subjective_answer(
+                school_id, student_id, access_code, cls, subject, answers
+            )
+            if ok:
+                st.success("✅ Answers submitted successfully! Await teacher review.")
+            else:
+                st.error("❌ Could not save answers. Please try again.")
+
+
+
+
+def get_test_type(subject_name: str):
+    """
+    Determines if a subject should be Objective or Subjective.
+    You can later move this logic to the DB or admin panel for flexibility.
+    """
+    subject_name = subject_name.strip().lower()
+
+    # Example logic — you can customize
+    OBJECTIVE_SUBJECTS = [
+        "mathematics", "science", "ict", "rme", "social studies", "english"
+    ]
+    SUBJECTIVE_SUBJECTS = [
+        "essay writing", "composition", "literature", "dictation"
+    ]
+
+    if subject_name in OBJECTIVE_SUBJECTS:
+        return "objective"
+    elif subject_name in SUBJECTIVE_SUBJECTS:
+        return "subjective"
+    else:
+        # Default to objective if not categorized yet
+        return "objective"
+
+
+

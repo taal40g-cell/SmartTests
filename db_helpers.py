@@ -10,11 +10,10 @@ import random
 import string
 import uuid
 # db_helpers.py
-
 from models import StudentProgress,School,Subject,TestDuration,ArchivedQuestion
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional, Dict, List, Any
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, JSON, func
+from sqlalchemy import func
 
 
 # ==============================
@@ -23,13 +22,12 @@ from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Foreign
 from database import get_session, test_db_connection
 from models import (
     Admin,
-    User,
     Student,
     Question,
     Submission,
     Retake,
     TestResult,
-    Config,
+
 )
 
 # ==============================
@@ -445,13 +443,13 @@ def add_student_db(name, class_name, school_id, db=None):
 
         # ✅ Use the correct field name ('class_name')
         student = Student(
-            unique_id=unique_id,
             name=name.strip(),
             class_name=class_name,   # fixed from class_level → class_name
             access_code=access_code,
             can_retake=True,
             submitted=False,
             school_id=school_id
+
         )
 
         db.add(student)
@@ -752,47 +750,49 @@ def handle_uploaded_questions(class_name, subject, valid_questions, school_id=No
     finally:
         db.close()
 
-
-
-
 @st.cache_data(ttl=60)
 def load_questions_db(class_name: str, subject: str, school_id=None, limit: int = 30) -> list[dict]:
-    """Fetch randomized questions from DB (default max 30) with automatic school filter and subject_id."""
+    """Robust question loader that handles case, whitespace, and mixed formatting in DB."""
     db = get_session()
     try:
-        # Automatically detect school_id from session if not provided
+        # Auto-detect school_id if missing
         if not school_id:
             school_id = get_current_school_id()
 
-        class_name_lower = class_name.strip().lower()
-        subject_lower = subject.strip().lower()
+        if not class_name or not subject:
+            print("⚠️ Missing class_name or subject in load_questions_db:", class_name, subject)
+            return []
 
-        # Base query
+        # Normalize inputs
+        class_key = class_name.lower().replace(" ", "")   # removes spaces (jhs 1 → jhs1)
+        subject_key = subject.lower().strip()             # english → english
+
+        # Build robust query
         query = db.query(Question).filter(
-            func.lower(Question.class_name) == class_name_lower,
-            func.lower(Question.subject) == subject_lower
+            func.replace(func.lower(Question.class_name), ' ', '') == class_key,
+            func.lower(Question.subject) == subject_key
         )
 
-        # Limit to school if available
         if school_id:
             query = query.filter(Question.school_id == school_id)
 
-        # Randomize and limit results
+        # Random selection
         questions = query.order_by(func.random()).limit(limit).all()
 
         result = []
         for q in questions:
-            # Safely parse options JSON
+            # Parse options safely
             try:
                 opts = json.loads(q.options) if isinstance(q.options, str) else q.options
             except Exception:
-                opts = [q.options] if isinstance(q.options, str) else []
+                opts = []
 
             result.append({
                 "id": q.id,
-                "question": q.question_text,
+                "question_text": q.question_text,
                 "options": opts,
                 "answer": q.answer,
+                "type": getattr(q, "type", "objective"),
                 "subject_id": q.subject_id,
                 "school_id": q.school_id
             })
@@ -849,54 +849,7 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
-def save_student_answers(access_code: str, subject: str, questions: list, answers: list, school_id=None):
-    """
-    Save student answers to the database.
-    Ensures multi-tenant support by checking school_id if provided.
-    """
-    student = get_student_by_access_code_db(access_code)
-    if not student:
-        raise ValueError("Invalid student access code")
 
-    if school_id and student.school_id != school_id:
-        raise ValueError("Student does not belong to this school")
-
-    submissions, correct = [], 0
-    total = len(questions)
-
-    for i, q in enumerate(questions):
-        opts = q.get("options", [])
-        if isinstance(opts, str):
-            try:
-                opts = json.loads(opts)
-            except Exception:
-                opts = [o.strip() for o in opts.split(",") if o.strip()]
-
-        idx = answers[i] if i < len(answers) else -1
-        selected = opts[idx] if 0 <= idx < len(opts) else None
-
-        if selected:
-            sel_norm = normalize_text(selected)
-            correct_ans = normalize_text(q.get("correct_answer_text", ""))
-            is_correct = sel_norm == correct_ans
-            if is_correct:
-                correct += 1
-
-            submissions.append({
-                "question_id": q["id"],
-                "selected": sel_norm,
-                "is_correct": is_correct
-            })
-
-    score = correct
-    percentage = (score / total) * 100 if total else 0
-
-    print("📝 Debug save_student_answers()")
-    print(f"Student: {student.name} | Subject: {subject}")
-    print(f"✅ Final Score: {score}/{total} ({percentage:.1f}%)")
-
-    # Save results to DB with optional school_id
-    add_submission_db(student.id, subject, submissions, score, total, percentage, school_id=school_id)
 
 def add_submission_db(student_id: int, subject: str, submissions: list, score: int, total: int, percentage: float, school_id=None):
     """
@@ -948,48 +901,6 @@ def add_submission_db(student_id: int, subject: str, submissions: list, score: i
 # -----------------------------
 # Submissions
 # -----------------------------
-def set_submission_db(access_code, subject, questions, answers, school_id=None):
-    """
-    Save student submissions (answers = indices) with optional school_id.
-    Converts index → option text to compare with correct_answer.
-    """
-    student = get_student_by_access_code_db(access_code)
-    if not student:
-        raise ValueError("Invalid student access code")
-
-    # Verify school consistency
-    if school_id and student.school_id != school_id:
-        raise ValueError("Student does not belong to this school")
-
-    db = get_session()
-    try:
-        for i, q in enumerate(questions):
-            opts = q.get("options", [])
-            if isinstance(opts, str):
-                try:
-                    opts = json.loads(opts)
-                except Exception:
-                    opts = [o.strip() for o in opts.split(",") if o.strip()]
-
-            idx = answers[i] if i < len(answers) else -1
-            selected = opts[idx] if 0 <= idx < len(opts) else "No Answer"
-
-            correct = str(selected).strip().lower() == str(q.get("answer", "")).strip().lower()
-
-            db.add(Submission(
-                student_id=student.id,
-                question_id=q.get("id"),
-                selected_answer=selected,
-                correct=correct,
-                subject=subject,
-                school_id=school_id or student.school_id
-            ))
-
-        db.commit()
-        print(f"✅ Saved submissions for {student.name} ({access_code})")
-
-    finally:
-        db.close()
 
 
 def get_all_submissions_db(school_id=None):
@@ -1030,24 +941,32 @@ def get_retake_db(access_code: str, subject: str, school_id=None) -> bool:
         db.close()
 
 
-def decrement_retake(access_code: str, subject: str, school_id=None) -> None:
-    """Reduce the remaining retake count for a student by 1 (multi-tenant aware)."""
+def decrement_retake(access_code: str, subject: str, school_id=None, test_type="objective"):
+    """Mark that a student has started this test type, preventing duplicate attempts."""
     db = get_session()
     try:
-        student = db.query(Student).filter_by(access_code=access_code).first()
-        if not student:
-            raise ValueError("Invalid student access code")
+        from models import StudentProgress
 
-        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
+        query = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject=subject,
+            test_type=test_type
+        )
         if school_id:
-            query = query.filter(Retake.school_id == school_id)
+            query = query.filter_by(school_id=school_id)
+        record = query.first()
 
-        retake = query.first()
-        if retake and retake.can_retake:
-            retake.can_retake = False  # Or decrement numeric if using count
+        if record:
+            record.submitted = True  # mark as completed for this test type
             db.commit()
+    except Exception as e:
+        print("❌ decrement_retake error:", e)
+        db.rollback()
     finally:
         db.close()
+
+
+
 
 def set_retake_db(access_code: str, subject: str, can_retake: bool = True, school_id=None):
     """Create or update a student's retake permission for a subject (multi-tenant aware)."""
@@ -1125,70 +1044,89 @@ def get_submission_db(student_id, subject=None, school_id=None):
         db.close()
 
 
-def can_take_test(access_code: str, subject: str, school_id=None) -> tuple[bool, str]:
-    """Check if a student is allowed to take a test (multi-tenant aware)."""
-    student = get_student_by_access_code_db(access_code)
-    if not student:
-        return False, "🛑 Invalid student access code."
+def can_take_test(access_code: str, subject: str, school_id=None, test_type="objective"):
+    """Check if student is allowed to take or retake this specific test type."""
+    db = get_session()
+    try:
+        from models import StudentProgress, Student
 
-    submissions = get_submission_db(student.id, subject, school_id)
-    can_retake = get_retake_db(access_code, subject, school_id)
+        student = db.query(Student).filter_by(access_code=access_code).first()
+        if not student:
+            return False, "⚠️ Invalid access code."
 
-    if submissions and not can_retake:
-        return False, "🛑 You have already submitted this test."
+        # Check if already submitted this type of test
+        query = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject=subject,
+            test_type=test_type
+        )
+        if school_id:
+            query = query.filter_by(school_id=school_id)
 
-    return True, ""
+        record = query.first()
+        if record and getattr(record, "submitted", False):
+            return False, f"✅ You have already submitted the {test_type} test for {subject}."
+
+        # Check retake allowance
+        if hasattr(student, "can_retake") and not student.can_retake:
+            return False, "🚫 Retake not allowed for this student."
+
+        return True, "✅ Allowed to take test."
+
+    except Exception as e:
+        print("❌ can_take_test error:", e)
+        return False, "❌ Error checking test permissions."
+    finally:
+        db.close()
 
 # -----------------------------
 # Question Tracker (UI only)
 # -----------------------------
-def show_question_tracker(questions, answers):
-    """Streamlit UI tracker: progress + grid navigator."""
+def show_question_tracker(questions, current_q, answers):
+    """Streamlit UI tracker: progress bar + clickable grid navigator."""
     import uuid
+    import streamlit as st
 
     total = len(questions)
     marked = set(st.session_state.get("marked_for_review", []))
 
-    # Stable unique test ID
+    # Stable unique test ID for session buttons
     if "test_id" not in st.session_state:
         st.session_state.test_id = str(uuid.uuid4())
     test_id = st.session_state.test_id
 
     student_id = st.session_state.get("student", {}).get("id", "anon")
-    subject = st.session_state.get("subject", "global")
+    subject = st.session_state.get("subject", "unknown")
 
-    # Progress summary
-    answered = sum(1 for ans in answers if ans not in [-1, None])
+    # -----------------------------
+    # Progress Summary + Bar
+    # -----------------------------
+    answered = sum(1 for ans in answers if ans not in ["", None])
     percent = int((answered / total) * 100) if total else 0
+
     st.markdown(
         f"<div style='background:#f9f9f9; padding:8px; border-radius:6px; "
-        f"border:1px solid #ddd; margin-bottom:6px;'>"
+        f"border:1px solid #ddd; margin-bottom:8px;'>"
         f"<b>📊 Progress:</b> {answered}/{total} answered — <b>{percent}%</b></div>",
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
     st.progress(answered / total if total else 0)
 
-    # Question navigator
-    def get_color(idx):
-        if idx in marked:
-            return "#FFA500"  # marked
-        elif idx < len(answers) and answers[idx] not in [-1, None]:
-            return "#2ECC71"  # answered
-        return "#E74C3C"  # unanswered
-
-    with st.expander("🔽 Question Navigator"):
-        for row_start in range(0, total, 10):
+    # -----------------------------
+    # Question Navigator (Expander)
+    # -----------------------------
+    with st.expander("🔽 Question Navigator", expanded=False):
+        for row_start in range(0, total, 10):  # 10 buttons per row
             cols = st.columns(10)
             for i in range(row_start, min(row_start + 10, total)):
-                color = get_color(i)
+                color = (
+                    "#FFA500" if i in marked
+                    else "#2ECC71" if answers[i] not in ["", None]
+                    else "#E74C3C"
+                )
+
                 btn_key = f"jump_{subject}_{student_id}_{test_id}_{i}"
-
-                if cols[i % 10].button("", key=btn_key, help=f"Go to Q{i+1}"):
-                    st.session_state.page = i + 1
-                    st.rerun()
-
-                cols[i % 10].markdown(
-                    f"""
+                label_html = f"""
                     <div style="
                         background:{color};
                         color:white;
@@ -1200,10 +1138,23 @@ def show_question_tracker(questions, answers):
                         line-height:30px;
                         margin:auto;
                         font-size:12px;
+                        border:{'3px solid #000' if i == current_q else 'none'};
                     ">{i+1}</div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                """
+
+                # Button click updates current question
+                if cols[i % 10].button(f" ", key=btn_key):
+                    st.session_state.current_q = i
+                    st.rerun()
+
+                cols[i % 10].markdown(label_html, unsafe_allow_html=True)
+
+        st.markdown(
+            "<p style='font-size:13px;'>🟩 Answered | 🟥 Unanswered | 🟨 Marked for review</p>",
+            unsafe_allow_html=True
+        )
+
+
 # ==============================
 # 🕒 Test Duration Helpers
 # ==============================
@@ -1674,25 +1625,43 @@ def has_submitted_test(access_code: str, subject: str) -> bool:
 
 
 # ==============================
-# 🧠 Save Ongoing Test Progress (Multi-Tenant)
+# ✅ Save Ongoing Test Progress (Objective + Subjective)
 # ==============================
-def save_progress(access_code: str, subject: str, answers: list, current_q: int, start_time: float, duration: int, questions: list, school_id=None):
-    """Insert or update ongoing test progress with optional school_id."""
+def save_progress(
+    access_code: str,
+    subject: str,
+    answers: list,
+    current_q: int,
+    start_time: float,
+    duration: int,
+    questions: list,
+    school_id: int | None = None,
+    test_type: str = "objective"
+):
+    """Insert or update ongoing progress for a specific test type."""
     db = get_session()
     try:
-        query = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject)
+        query = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject=subject,
+            test_type=test_type
+        )
+
         if school_id:
-            query = query.filter_by(school_id=school_id)
+            query = query.filter(StudentProgress.school_id == school_id)
+
         record = query.first()
 
         if record:
+            # ✅ Update existing record
             record.answers = answers
             record.current_q = current_q
             record.start_time = start_time
             record.duration = duration
             record.questions = questions
         else:
-            record = StudentProgress(
+            # ✅ Insert new progress record
+            new_record = StudentProgress(
                 access_code=access_code,
                 subject=subject,
                 answers=answers,
@@ -1700,11 +1669,13 @@ def save_progress(access_code: str, subject: str, answers: list, current_q: int,
                 start_time=start_time,
                 duration=duration,
                 questions=questions,
-                school_id=school_id
+                school_id=school_id,
+                test_type=test_type
             )
-            db.add(record)
+            db.add(new_record)
 
         db.commit()
+
     except SQLAlchemyError as e:
         print("❌ Save progress error:", e)
         db.rollback()
@@ -1712,47 +1683,77 @@ def save_progress(access_code: str, subject: str, answers: list, current_q: int,
         db.close()
 
 
+
 # ==============================
-# 📥 Load Saved Progress (Multi-Tenant)
+# ✅ Load Saved Progress (Objective + Subjective)
 # ==============================
-@st.cache_data(ttl=300)  # cache for 5 minutes
-def load_progress(access_code: str, subject: str, school_id=None) -> Optional[Dict]:
-    """Return saved progress for a student and subject with optional school_id."""
+@st.cache_data(ttl=300)
+def load_progress(
+    access_code: str,
+    subject: str,
+    school_id: int | None = None,
+    test_type: str = "objective"
+) -> Optional[Dict]:
+    """Load saved progress for a specific subject + test type."""
     db = get_session()
     try:
-        query = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject)
+        query = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject=subject,
+            test_type=test_type
+        )
+
         if school_id:
-            query = query.filter_by(school_id=school_id)
+            query = query.filter(StudentProgress.school_id == school_id)
+
         record = query.first()
 
-        if record:
-            return {
-                "answers": record.answers,
-                "current_q": record.current_q,
-                "start_time": record.start_time,
-                "duration": record.duration,
-                "questions": record.questions,
-            }
-        return None
+        if not record:
+            return None
+
+        return {
+            "answers": record.answers,
+            "current_q": record.current_q,
+            "start_time": record.start_time,
+            "duration": record.duration,
+            "questions": record.questions,
+            "test_type": record.test_type,
+        }
+
     except SQLAlchemyError as e:
         print("❌ Load progress error:", e)
         return None
+
     finally:
         db.close()
 
 
+
 # ==============================
-# 🧹 Clear Progress After Submission (Multi-Tenant)
+# ✅ Clear Progress After Submission
 # ==============================
-def clear_progress(access_code: str, subject: str, school_id=None):
-    """Remove saved progress after test submission with optional school_id."""
+def clear_progress(access_code: str, subject: str, school_id: int | None = None, test_type: str | None = None):
+    """
+    Clear saved progress.
+    If test_type is provided, clear only that type.
+    If not provided, clear ALL progress for that subject.
+    """
     db = get_session()
     try:
-        query = db.query(StudentProgress).filter_by(access_code=access_code, subject=subject)
+        query = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject=subject
+        )
+
         if school_id:
-            query = query.filter_by(school_id=school_id)
+            query = query.filter(StudentProgress.school_id == school_id)
+
+        if test_type:
+            query = query.filter(StudentProgress.test_type == test_type)
+
         query.delete()
         db.commit()
+
     except SQLAlchemyError as e:
         print("❌ Clear progress error:", e)
         db.rollback()
@@ -1892,7 +1893,6 @@ def get_students_by_school(school_id, class_level=None, active_only=True, db=Non
             db.close()
 
 
-
 def get_current_school_id() -> int | None:
     """
     Safely fetch the current logged-in admin's school_id from session.
@@ -1903,8 +1903,6 @@ def get_current_school_id() -> int | None:
         or st.session_state.get("admin_school_id")
         or st.session_state.get("current_school_id")
     )
-
-
 
 # =====================================================
 # 🧭 ASSIGN ADMIN TO A SCHOOL
@@ -2083,3 +2081,5 @@ def load_student_results(access_code: str, school_id=None):
         return []
     finally:
         db.close()
+
+

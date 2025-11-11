@@ -2,7 +2,6 @@
 # SmartTests Multi-Tenant Database Models
 # SQLAlchemy 2.0 Ready
 # ================================================
-
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, Boolean, Float, DateTime, Text, JSON,
@@ -48,7 +47,9 @@ class School(Base):
     subjects = relationship("Subject", back_populates="school", cascade="all, delete-orphan")
     durations = relationship("TestDuration", back_populates="school")
     archived_questions = relationship("ArchivedQuestion", back_populates="school", cascade="all, delete-orphan")
-
+    subjective_submissions = relationship(
+    "SubjectiveSubmission", back_populates="school", cascade="all, delete-orphan"
+)
 
 # ================================================
 # STUDENT
@@ -72,6 +73,7 @@ class Student(Base, TenantMixin):
     retakes = relationship("Retake", back_populates="student", cascade="all, delete-orphan")
     test_results = relationship("TestResult", back_populates="student", cascade="all, delete-orphan")
     progress = relationship("StudentProgress", back_populates="student", cascade="all, delete-orphan")
+    subjective_submissions = relationship("SubjectiveSubmission", back_populates="student", cascade="all, delete-orphan")
 
 # ================================================
 # ADMIN
@@ -231,12 +233,13 @@ class StudentProgress(Base):
     start_time = Column(Float, nullable=False)
     duration = Column(Integer, nullable=False)
     questions = Column(JSON, nullable=True)
-    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)  # new column
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+    test_type = Column(String(20), nullable=False, default="objective")  # ✅ Added this line
     last_saved = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relationship
+    # Relationships
     student = relationship("Student", back_populates="progress")
-    school = relationship("School")  # optional, for easier access to school info
+    school = relationship("School")
 
 # ================================================
 # CONFIG
@@ -297,3 +300,94 @@ class ArchivedQuestion(Base, TenantMixin):
     creator = relationship("User", back_populates="archived_questions", foreign_keys=[created_by])
     school = relationship("School", back_populates="archived_questions")
     subject_rel = relationship("Subject", back_populates="archived_questions", foreign_keys=[subject_id])
+
+
+
+
+# -----------------------------------------------------
+# 📝 1. Subjective Questions
+# -----------------------------------------------------
+class SubjectiveQuestion(Base):
+    __tablename__ = "subjective_questions"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(String, nullable=False)
+    class_name = Column(String, nullable=False)
+    subject = Column(String(100), nullable=False)  # ✅ Add this line
+    subject_id = Column(Integer, ForeignKey("subjects.id"))  # ✅ Keep this link
+    question_text = Column(Text, nullable=False)
+    marks = Column(Integer, default=10)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    subject_rel = relationship("Subject")  # ✅ To access subject details
+    answers = relationship("SubjectiveAnswer", back_populates="question", cascade="all, delete-orphan")
+
+class SubjectiveAnswer(Base):
+    __tablename__ = "subjective_answers"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(String, nullable=False)
+    student_id = Column(Integer, ForeignKey("students.id"))
+    access_code = Column(String, nullable=False)
+    class_name = Column(String, nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id"))  # ✅ Linked as well
+    question_id = Column(Integer, ForeignKey("subjective_questions.id"))
+    answer_text = Column(Text)
+    uploaded_file = Column(String)
+    submitted_on = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="Pending Review")
+
+    question = relationship("SubjectiveQuestion", back_populates="answers")
+    grade = relationship("SubjectiveGrade", back_populates="answer", uselist=False)
+    subject_rel = relationship("Subject")  # ✅ optional convenience link
+
+
+class SubjectiveGrade(Base):
+    __tablename__ = "subjective_grades"
+
+    id = Column(Integer, primary_key=True)
+    school_id = Column(String, nullable=False)
+    answer_id = Column(Integer, ForeignKey("subjective_answers.id"))
+    teacher_id = Column(Integer, ForeignKey("admins.id"))
+    score = Column(Integer)
+    comment = Column(Text)
+    graded_on = Column(DateTime, default=datetime.utcnow)
+
+    answer = relationship("SubjectiveAnswer", back_populates="grade")
+
+
+# ================================================
+# SUBJECTIVE SUBMISSION
+# ================================================
+class SubjectiveSubmission(Base, TenantMixin):
+    __tablename__ = "subjective_submissions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)  # ✅ add this line
+    subject = Column(String(100), nullable=False)
+    answers = Column(JSON, nullable=False)  # Store all typed answers
+    attachments = Column(JSON, nullable=True)  # List of uploaded file paths or URLs
+    status = Column(String(50), default="Pending Review")  # Pending / Reviewed / Graded
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # ✅ Relationships
+    student = relationship("Student", back_populates="subjective_submissions")
+    school = relationship("School", back_populates="subjective_submissions")
+
+
+class ObjectiveQuestion(Base):
+    __tablename__ = "objective_questions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+    class_name = Column(String, nullable=False)
+    subject = Column(String(100), nullable=False)
+    question_text = Column(Text, nullable=False)
+    options = Column(JSON, nullable=False)
+    correct_answer = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+
