@@ -218,9 +218,8 @@ class TestResult(Base, TenantMixin):
     student = relationship("Student", back_populates="test_results")
     school = relationship("School", back_populates="test_results")
 
-# ================================================
-# STUDENT PROGRESS
-# ================================================
+
+
 class StudentProgress(Base):
     __tablename__ = "student_progress"
 
@@ -234,7 +233,8 @@ class StudentProgress(Base):
     duration = Column(Integer, nullable=False)
     questions = Column(JSON, nullable=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
-    test_type = Column(String(20), nullable=False, default="objective")  # ✅ Added this line
+    test_type = Column(String(20), nullable=False, default="objective")
+    submitted = Column(Boolean, default=False, nullable=False)  # ✅ Add this
     last_saved = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships

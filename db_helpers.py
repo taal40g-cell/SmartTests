@@ -901,8 +901,6 @@ def add_submission_db(student_id: int, subject: str, submissions: list, score: i
 # -----------------------------
 # Submissions
 # -----------------------------
-
-
 def get_all_submissions_db(school_id=None):
     """
     Return all submissions in the database.
@@ -917,80 +915,6 @@ def get_all_submissions_db(school_id=None):
     except Exception as e:
         print(f"[DB ERROR] Failed to fetch submissions: {e}")
         return []
-    finally:
-        db.close()
-
-# -----------------------------
-# Retakes
-# -----------------------------
-def get_retake_db(access_code: str, subject: str, school_id=None) -> bool:
-    """Check if a student has retake permission for a subject (multi-tenant aware)."""
-    db = get_session()
-    try:
-        student = db.query(Student).filter_by(access_code=access_code).first()
-        if not student:
-            return False
-
-        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
-        if school_id:
-            query = query.filter(Retake.school_id == school_id)
-
-        retake = query.first()
-        return bool(retake and retake.can_retake)
-    finally:
-        db.close()
-
-
-def decrement_retake(access_code: str, subject: str, school_id=None, test_type="objective"):
-    """Mark that a student has started this test type, preventing duplicate attempts."""
-    db = get_session()
-    try:
-        from models import StudentProgress
-
-        query = db.query(StudentProgress).filter_by(
-            access_code=access_code,
-            subject=subject,
-            test_type=test_type
-        )
-        if school_id:
-            query = query.filter_by(school_id=school_id)
-        record = query.first()
-
-        if record:
-            record.submitted = True  # mark as completed for this test type
-            db.commit()
-    except Exception as e:
-        print("❌ decrement_retake error:", e)
-        db.rollback()
-    finally:
-        db.close()
-
-
-
-
-def set_retake_db(access_code: str, subject: str, can_retake: bool = True, school_id=None):
-    """Create or update a student's retake permission for a subject (multi-tenant aware)."""
-    db = get_session()
-    try:
-        student = db.query(Student).filter_by(access_code=access_code).first()
-        if not student:
-            raise ValueError("Invalid student access code")
-
-        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
-        if school_id:
-            query = query.filter(Retake.school_id == school_id)
-
-        retake = query.first()
-        if retake:
-            retake.can_retake = can_retake
-        else:
-            db.add(Retake(
-                student_id=student.id,
-                subject=subject,
-                can_retake=can_retake,
-                school_id=school_id or student.school_id
-            ))
-        db.commit()
     finally:
         db.close()
 
@@ -1043,41 +967,6 @@ def get_submission_db(student_id, subject=None, school_id=None):
     finally:
         db.close()
 
-
-def can_take_test(access_code: str, subject: str, school_id=None, test_type="objective"):
-    """Check if student is allowed to take or retake this specific test type."""
-    db = get_session()
-    try:
-        from models import StudentProgress, Student
-
-        student = db.query(Student).filter_by(access_code=access_code).first()
-        if not student:
-            return False, "⚠️ Invalid access code."
-
-        # Check if already submitted this type of test
-        query = db.query(StudentProgress).filter_by(
-            access_code=access_code,
-            subject=subject,
-            test_type=test_type
-        )
-        if school_id:
-            query = query.filter_by(school_id=school_id)
-
-        record = query.first()
-        if record and getattr(record, "submitted", False):
-            return False, f"✅ You have already submitted the {test_type} test for {subject}."
-
-        # Check retake allowance
-        if hasattr(student, "can_retake") and not student.can_retake:
-            return False, "🚫 Retake not allowed for this student."
-
-        return True, "✅ Allowed to take test."
-
-    except Exception as e:
-        print("❌ can_take_test error:", e)
-        return False, "❌ Error checking test permissions."
-    finally:
-        db.close()
 
 # -----------------------------
 # Question Tracker (UI only)
@@ -1198,33 +1087,37 @@ def set_test_duration(class_name: str, subject: str, school_id: int, duration_mi
     finally:
         db.close()
 
-
 def get_test_duration(class_name: str, subject: str, school_id: int):
     """
-    Fetch test duration (in seconds) for a given class, subject, and school.
-    Returns None if not found.
+    Returns duration IN MINUTES.
+    DB stores duration in SECONDS.
     """
     if not (class_name and subject and school_id):
-        return None  # 🚫 No warning message anymore
+        return None
 
     db = get_session()
     try:
-        from models import TestDuration  # ensure model is imported
+        from models import TestDuration
+        from sqlalchemy import and_
 
-        record = db.query(TestDuration).filter_by(
-            class_name=class_name.strip(),
-            subject=subject.strip(),
-            school_id=school_id
+        record = db.query(TestDuration).filter(
+            and_(
+                TestDuration.class_name.ilike(class_name.strip()),
+                TestDuration.subject.ilike(subject.strip()),
+                TestDuration.school_id == school_id
+            )
         ).first()
 
         if record and record.duration and record.duration > 0:
-            return int(record.duration)
+            # Convert seconds → minutes
+            duration_minutes = record.duration // 60
 
-        print(f"⚠️ No duration found for {class_name}-{subject} (school_id={school_id})")
+            print("⏱ LOADED DURATION:", record.duration, "sec →", duration_minutes, "mins")
+
+            return max(1, int(duration_minutes))
+
         return None
-    except Exception as e:
-        print(f"❌ get_test_duration() error: {e}")
-        return None
+
     finally:
         db.close()
 
@@ -1623,65 +1516,44 @@ def has_submitted_test(access_code: str, subject: str) -> bool:
         db.close()
 
 
+def save_progress(access_code, subject, answers, current_q, start_time,
+                  duration, questions, school_id, test_type, student_id=None, submitted=False):
 
-# ==============================
-# ✅ Save Ongoing Test Progress (Objective + Subjective)
-# ==============================
-def save_progress(
-    access_code: str,
-    subject: str,
-    answers: list,
-    current_q: int,
-    start_time: float,
-    duration: int,
-    questions: list,
-    school_id: int | None = None,
-    test_type: str = "objective"
-):
-    """Insert or update ongoing progress for a specific test type."""
     db = get_session()
     try:
-        query = db.query(StudentProgress).filter_by(
+        existing = db.query(StudentProgress).filter_by(
             access_code=access_code,
             subject=subject,
+            school_id=school_id,
             test_type=test_type
-        )
+        ).first()
 
-        if school_id:
-            query = query.filter(StudentProgress.school_id == school_id)
-
-        record = query.first()
-
-        if record:
-            # ✅ Update existing record
-            record.answers = answers
-            record.current_q = current_q
-            record.start_time = start_time
-            record.duration = duration
-            record.questions = questions
+        if existing:
+            existing.answers = answers
+            existing.current_q = current_q
+            existing.start_time = float(start_time)
+            existing.duration = int(duration)
+            existing.questions = questions
+            existing.submitted = bool(submitted)
+            if student_id:
+                existing.student_id = student_id
         else:
-            # ✅ Insert new progress record
-            new_record = StudentProgress(
+            db.add(StudentProgress(
                 access_code=access_code,
                 subject=subject,
+                school_id=school_id,
+                test_type=test_type,
                 answers=answers,
                 current_q=current_q,
-                start_time=start_time,
-                duration=duration,
+                start_time=float(start_time),
+                duration=int(duration),
                 questions=questions,
-                school_id=school_id,
-                test_type=test_type
-            )
-            db.add(new_record)
-
+                student_id=student_id,
+                submitted=submitted
+            ))
         db.commit()
-
-    except SQLAlchemyError as e:
-        print("❌ Save progress error:", e)
-        db.rollback()
     finally:
         db.close()
-
 
 
 # ==============================
@@ -1694,7 +1566,10 @@ def load_progress(
     school_id: int | None = None,
     test_type: str = "objective"
 ) -> Optional[Dict]:
-    """Load saved progress for a specific subject + test type."""
+    """
+    Load saved progress for a specific subject + test type directly from DB columns.
+    Returns None if no progress found.
+    """
     db = get_session()
     try:
         query = db.query(StudentProgress).filter_by(
@@ -1703,21 +1578,23 @@ def load_progress(
             test_type=test_type
         )
 
-        if school_id:
+        if school_id is not None:
             query = query.filter(StudentProgress.school_id == school_id)
 
         record = query.first()
-
         if not record:
             return None
 
+        # Return progress using DB columns
         return {
-            "answers": record.answers,
-            "current_q": record.current_q,
-            "start_time": record.start_time,
-            "duration": record.duration,
-            "questions": record.questions,
+            "answers": record.answers or [],
+            "current_q": record.current_q or 0,
+            "start_time": record.start_time or datetime.now().timestamp(),
+            "duration": record.duration or 1800,  # fallback 30 mins
+            "questions": record.questions or [],
             "test_type": record.test_type,
+            "submitted": record.submitted,
+            "student_id": record.student_id,
         }
 
     except SQLAlchemyError as e:
@@ -1726,7 +1603,6 @@ def load_progress(
 
     finally:
         db.close()
-
 
 
 # ==============================
@@ -2083,3 +1959,161 @@ def load_student_results(access_code: str, school_id=None):
         db.close()
 
 
+def can_take_test(access_code, subject, school_id):
+    db = get_session()
+    try:
+        result = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject=subject,
+            school_id=school_id
+        ).first()
+
+        # --------------------------------------
+        # ✅ If no record → student never took test
+        # --------------------------------------
+        if not result:
+            return True
+
+        # --------------------------------------
+        # ✅ submitted is a Boolean column (NOT inside .data)
+        # --------------------------------------
+        submitted = bool(getattr(result, "submitted", False))
+
+        # --------------------------------------
+        # ✅ If the test was started but NOT submitted → allow resume
+        # --------------------------------------
+        if not submitted:
+            return True
+
+        # --------------------------------------
+        # ⛔ If submitted → check if admin granted retake
+        # --------------------------------------
+        retake = db.query(Retake).filter_by(
+            student_id=result.student_id,
+            subject=subject,
+            school_id=school_id
+        ).first()
+
+        return bool(retake and retake.can_retake)
+
+    finally:
+        db.close()
+
+
+
+def get_retake_db(access_code: str, subject: str, school_id=None) -> bool:
+    """Check if a student has retake permission for a subject (multi-tenant aware)."""
+    db = get_session()
+    try:
+        student = db.query(Student).filter_by(access_code=access_code).first()
+        if not student:
+            return False
+
+        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
+        if school_id:
+            query = query.filter(Retake.school_id == school_id)
+
+        retake = query.first()
+        return bool(retake and retake.can_retake)
+    finally:
+        db.close()
+
+
+def decrement_retake(access_code: str, subject: str, school_id=None, test_type="objective"):
+    """Mark that a student has started this test type, preventing duplicate attempts."""
+    db = get_session()
+    try:
+        from models import StudentProgress
+
+        query = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject=subject,
+            test_type=test_type
+        )
+        if school_id:
+            query = query.filter_by(school_id=school_id)
+        record = query.first()
+
+        if record:
+            record.submitted = True  # mark as completed for this test type
+            db.commit()
+    except Exception as e:
+        print("❌ decrement_retake error:", e)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def set_retake_db(
+        access_code: str,
+        subject: str,
+        can_retake: bool = True,
+        school_id=None,
+        auto_create_student=False,
+        student_name=None,
+        class_name=None
+):
+    """
+    Create or update a student's retake permission for a subject (multi-tenant aware).
+
+    If auto_create_student=True, you must provide student_name and class_name.
+    """
+    db = get_session()
+    try:
+        access_code = str(access_code).strip()
+        school_id_int = int(school_id) if school_id is not None else None
+
+        # Query the student
+        query = db.query(Student).filter(func.trim(Student.access_code) == access_code)
+        if school_id_int is not None:
+            query = query.filter(Student.school_id == school_id_int)
+
+        student = query.first()
+
+        # Auto-create student if missing
+        if not student and auto_create_student:
+            if not student_name or not class_name:
+                raise ValueError(
+                    "student_name and class_name must be provided to auto-create a student."
+                )
+            student = Student(
+                name=student_name.strip(),
+                access_code=access_code,
+                class_name=class_name.strip(),
+                school_id=school_id_int or 0
+            )
+            db.add(student)
+            db.commit()
+            db.refresh(student)
+
+            print(f"ℹ️ Created student '{student.name}' with access_code={access_code}")
+
+        if not student:
+            raise ValueError(f"Invalid student access code '{access_code}' for school '{school_id}'")
+
+        # Update or create Retake entry
+        retake_query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
+        if school_id_int is not None:
+            retake_query = retake_query.filter(Retake.school_id == school_id_int)
+
+        retake = retake_query.first()
+
+        if retake:
+            retake.can_retake = can_retake
+        else:
+            retake = Retake(
+                student_id=student.id,
+                subject=subject,
+                can_retake=can_retake
+            )
+            db.add(retake)
+            db.commit()
+
+        print(f"✅ Retake set for {student.name} ({access_code}) in subject '{subject}'")
+
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error in set_retake_db: {e}")
+        raise
+    finally:
+        db.close()

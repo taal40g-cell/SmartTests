@@ -37,6 +37,7 @@ from db_helpers import (
     save_subjects,
     clear_questions_db,
     clear_submissions_db,
+    clear_progress,
     set_retake_db,
     get_retake_db,
     update_admin_password,
@@ -1039,7 +1040,7 @@ def run_admin_mode():
                     db.add(new_q)
                 db.commit()
                 st.success(f"🎯 Uploaded {len(cleaned)} subjective questions for {class_name} - {subject}")
-                st.experimental_rerun()
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ Upload failed: {e}")
             finally:
@@ -1307,14 +1308,13 @@ def run_admin_mode():
                 st.warning("Please select both class and subject to view or set duration.")
 
     # -----------------------
-    # 🏆 Leaderboard (Multi-School Support)
+    # 🏆 View Leaderboard
     # -----------------------
     elif selected_tab == "🏆 View Leaderboard":
         st.subheader("🏆 Leaderboard")
 
-        # ✅ Detect current admin’s school (from login/session)
+        # Admin’s school from session
         school_id = st.session_state.get("school_id", None)
-
         if not school_id:
             st.error("School information not found. Please log in again.")
             st.stop()
@@ -1324,7 +1324,6 @@ def run_admin_mode():
 
         db = get_session()
         try:
-            # ✅ Filter leaderboard only for the logged-in admin’s school
             results = (
                 db.query(Leaderboard, Student)
                 .join(Student, Leaderboard.student_id == Student.id)
@@ -1332,7 +1331,6 @@ def run_admin_mode():
                 .order_by(Leaderboard.score.desc())
                 .all()
             )
-
         finally:
             db.close()
 
@@ -1351,16 +1349,18 @@ def run_admin_mode():
             ])
 
             if filter_input.strip():
+                search = filter_input.strip()
                 df = df[
-                    df["Student Name"].str.contains(filter_input.strip(), case=False)
-                    | df["Access Code"].str.contains(filter_input.strip(), case=False)
-                    | df["Class"].str.contains(filter_input.strip(), case=False)
+                    df["Student Name"].str.contains(search, case=False)
+                    | df["Access Code"].str.contains(search, case=False)
+                    | df["Class"].str.contains(search, case=False)
                     ]
                 if df.empty:
                     st.warning("No matching records found.")
 
             subjects_present = sorted(df["Subject"].unique()) if "Subject" in df.columns else ["General"]
             tabs = st.tabs(subjects_present)
+
             for i, subject in enumerate(subjects_present):
                 with tabs[i]:
                     df_sub = df[df["Subject"] == subject].sort_values(by="Score", ascending=False)
@@ -1380,25 +1380,62 @@ def run_admin_mode():
     # -----------------------
     elif selected_tab == "🔄 Allow Retake":
         st.subheader("🔄 Allow Retake Permission")
-        code = st.text_input("Student Access Code", key="retake_code")
-        if code:
-            student = get_student_by_access_code_db(code)
+
+        code_input = st.text_input("Student Access Code", key="retake_code").strip().upper()
+        if code_input:
+            student = get_student_by_access_code_db(code_input)
             if not student:
-                st.error("Invalid code.")
-            else:
-                st.info(f"Student: {student.name} | Class: {student.class_name}")
-                st.markdown("### Manage Retake Permissions")
-                toggle_all = st.checkbox("Toggle All Subjects", key="toggle_all_retake")
-                subject_permissions = {}
-                for subj in load_subjects():
-                    current_allow = bool(get_retake_db(code, subj))
-                    if toggle_all:
-                        current_allow = True
-                    subject_permissions[subj] = st.checkbox(subj, value=current_allow, key=f"allow_{subj}")
-                if st.button("💾 Save All Changes", key="save_retake_btn"):
-                    for subj, allow in subject_permissions.items():
-                        set_retake_db(code, subj, allow)
-                    st.success("✅ Retake permissions updated for all selected subjects.")
+                st.error("Invalid student code. Make sure the code exists.")
+                st.stop()
+
+            st.info(f"Student: {student.name} | Class: {student.class_name}")
+            st.markdown("### Manage Retake Permissions")
+
+            # Load subjects for the school
+            subjects = load_subjects(school_id=student.school_id)
+            if not subjects:
+                st.warning("No subjects found for this school.")
+                st.stop()
+
+            toggle_all = st.checkbox("Allow All Subjects", key="toggle_all_retake")
+            subject_permissions = {}
+
+            for subj in subjects:
+                # Load current permission from DB
+                allow_in_db = get_retake_db(code_input, subj, school_id=student.school_id)
+
+                # Default to False if no record exists
+                current_allow = bool(allow_in_db) if allow_in_db is not None else False
+
+                # If admin ticked "Allow All", override
+                if toggle_all:
+                    current_allow = True
+
+                # Render checkbox for each subject
+                subject_permissions[subj] = st.checkbox(subj, value=current_allow, key=f"allow_{subj}")
+
+            # Save changes
+            if st.button("💾 Save Changes", key="save_retake_btn"):
+                for subj, allow in subject_permissions.items():
+
+                    # 1️⃣ Update retake permission in DB
+                    set_retake_db(
+                        code_input,
+                        subj,
+                        can_retake=allow,
+                        school_id=student.school_id
+                    )
+
+                    # 2️⃣ If retake allowed → clear previous test attempt
+                    if allow:
+                        clear_progress(
+                            access_code=code_input,
+                            subject=subj,
+                            school_id=student.school_id
+                        )
+
+                st.success(f"✅ Retake permissions updated for {student.name}.")
+
 
 
     # -----------------------

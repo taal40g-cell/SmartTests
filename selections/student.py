@@ -1,7 +1,3 @@
-import uuid
-import time
-import json
-import random
 from datetime import datetime, timedelta
 import streamlit as st
 import qrcode, io
@@ -9,7 +5,6 @@ import pandas as pd
 from ui import render_test, generate_pdf,get_test_type
 from helpers import get_subjective_questions,get_objective_questions,render_subjective_test,save_student_answers,get_subjective_questions
 from db_helpers import (
-    load_questions_db,
     show_question_tracker,
     can_take_test,
     get_users,load_subjects,
@@ -246,7 +241,9 @@ def run_student_mode():
         st.error("Class not set for student — contact admin.")
         st.stop()
 
+    # -------------------------
     # Load subjects once and cache in session_state
+    # -------------------------
     if "subjects" not in st.session_state:
         try:
             st.session_state.subjects = load_subjects(class_name, school_id)
@@ -265,16 +262,15 @@ def run_student_mode():
     st.markdown("#### 📘 Select Subject")
     selected_subject = st.selectbox(
         "Subject",
-        [s["name"] if isinstance(s, dict) else s for s in st.session_state.subjects],
+        [s["name"] if isinstance(s, dict) else s for s in subjects],
         key="subject_select_box"
     )
     st.session_state.subject = selected_subject
 
     # -------------------------
-    # Determine Subject ID (for DB use)
+    # Determine Subject ID
     # -------------------------
     selected_subject_id = None
-    subjects = st.session_state.subjects
     if subjects and isinstance(subjects[0], dict):
         for s in subjects:
             if s.get("name") == selected_subject:
@@ -282,39 +278,30 @@ def run_student_mode():
                 break
     elif subjects and isinstance(subjects[0], str):
         selected_subject_id = selected_subject  # fallback
+
     if selected_subject_id is None:
         st.error(f"❌ Selected subject ID not found for '{selected_subject}'")
         st.stop()
 
-    school_id = str(st.session_state.student.get("school_id", ""))
-
     # -------------------------
-    # Load Questions (once per subject)
+    # Load Questions
     # -------------------------
-    key_obj = f"objective_{st.session_state.class_name}_{selected_subject}_{school_id}"
-    key_subj = f"subjective_{st.session_state.class_name}_{selected_subject}_{school_id}"
+    st.session_state.class_name = class_name
+    key_obj = f"objective_{class_name}_{selected_subject}_{school_id}"
+    key_subj = f"subjective_{class_name}_{selected_subject}_{school_id}"
 
     if key_obj not in st.session_state:
-        st.session_state[key_obj] = get_objective_questions(
-            st.session_state.class_name, selected_subject, school_id
-        ) or []
-
+        st.session_state[key_obj] = get_objective_questions(class_name, selected_subject, school_id) or []
     if key_subj not in st.session_state:
-        st.session_state[key_subj] = get_subjective_questions(
-            st.session_state.class_name, selected_subject, school_id
-        ) or []
+        st.session_state[key_subj] = get_subjective_questions(class_name, selected_subject, school_id) or []
 
     objective_questions = st.session_state[key_obj]
     subjective_questions = st.session_state[key_subj]
 
-
     # -------------------------
     # Choose Test Type
     # -------------------------
-    # Always show both options
     test_options = ["Objective", "Subjective"]
-
-    # Mark options with no questions
     if not objective_questions:
         test_options[0] += " (No questions)"
     if not subjective_questions:
@@ -322,185 +309,215 @@ def run_student_mode():
 
     st.markdown(
         """
-        <div style="
-            display: inline-block;
-            font-size: 20px;
-            font-weight: bold;
-            color: #f3f6f6;
-            border-bottom: 4px solid #4CAF50;
-            border-radius: 2px;
-            padding-bottom: 2px;
-            margin-bottom: 10px;
-        ">
-            🧩 Choose Test Type
+        <div style='display:inline-block; font-size:20px; font-weight:bold;
+        color:#f3f6f6; border-bottom:4px solid #4CAF50; padding-bottom:2px; margin-bottom:10px;'>
+        🧩 Choose Test Type
         </div>
-        """,
-        unsafe_allow_html=True
+        """, unsafe_allow_html=True
     )
 
-    # ✅ Single radio with unique key
     test_choice = st.radio(
         "Choose type",
         test_options,
         index=0,
         horizontal=True,
-        key=f"test_type_radio_{st.session_state.class_name}_{selected_subject}"
+        key=f"test_type_radio_{class_name}_{selected_subject}"
     )
-
-    # Normalize value for internal use
-    if "objective" in test_choice.lower():
-        st.session_state.test_type = "objective"
-    else:
-        st.session_state.test_type = "subjective"
-
+    st.session_state.test_type = "objective" if "objective" in test_choice.lower() else "subjective"
     st.session_state.test_phase = st.session_state.test_type
+
+
 
     # -------------------------
     # Start / Resume Buttons
     # -------------------------
     access_code = st.session_state.student.get("access_code", "").strip()
-    saved_progress = load_progress(access_code, selected_subject) if access_code else None
+    school_id = st.session_state.get("school_id")
 
-    col1, col2 = st.columns([1, 3])
-    start_clicked = col1.button("🚀 Start Test", key=f"start_btn_{selected_subject}", use_container_width=True)
+    # Load existing progress (if any)
+    saved_progress = (
+        load_progress(
+            access_code,
+            selected_subject,
+            school_id=school_id,
+            test_type=st.session_state.test_type
+        )
+        if access_code
+        else None
+    )
 
+    # -------------------------
+    # Ensure a progress row exists
+    # -------------------------
+    from database import get_session
+    from models import StudentProgress
+    db = get_session()
+    try:
+        if access_code:
+            record = db.query(StudentProgress).filter_by(
+                access_code=access_code,
+                subject=selected_subject,
+                test_type=st.session_state.test_type,
+            )
+            if school_id:
+                record = record.filter(StudentProgress.school_id == school_id)
+            record = record.first()
+
+            if not record:
+                # Create empty progress row
+                record = StudentProgress(
+                    access_code=access_code,
+                    subject=selected_subject,
+                    answers=[],
+                    current_q=0,
+                    start_time=datetime.now().timestamp(),
+                    duration=30 * 60,
+                    questions=[],
+                    school_id=school_id,
+                    test_type=st.session_state.test_type,
+                    submitted=False
+                )
+                db.add(record)
+                db.commit()
+    finally:
+        db.close()
+
+    # ======================================================
+    # 🔄 RETAKE / RESUME LOGIC (CLEAN + STABLE VERSION)
+    # ======================================================
+
+    from db_helpers import can_take_test, get_test_duration
+
+    col1, col2 = st.columns(2)
+
+    start_clicked = col1.button("🚀 Start Test", key=f"start_btn_{selected_subject}")
     resume_clicked = False
-    if saved_progress and not saved_progress.get("submitted", False):
-        resume_clicked = col2.button("🔄 Resume Test", key=f"resume_btn_{selected_subject}", use_container_width=True)
-    elif saved_progress and saved_progress.get("submitted", False):
-        col2.info("✅ You already submitted this test.")
 
-    # -------------------------
-    # Resume Test Logic
-    # -------------------------
-    if resume_clicked and saved_progress:
-        questions = saved_progress.get("questions", [])
-        answers = _normalize_answers(saved_progress.get("answers", []), questions)
+    # --------------------------------------------
+    # 1️⃣ Check saved progress (submitted or not)
+    # --------------------------------------------
+    if saved_progress:
+        already_submitted = saved_progress.get("submitted", False)
 
-        # Preserve option order from saved progress
-        for q in questions:
-            q_type = q.get("type", "objective").lower()
-            if q_type == "objective":
-                opts = q.get("options", [])
-                if isinstance(opts, str):
-                    try:
-                        opts = json.loads(opts)
-                    except Exception:
-                        opts = [x.strip() for x in opts.split(",") if x.strip()]
-                q["options"] = opts
-                q["correct_answer_text"] = str(q.get("correct_answer_text", "")).strip()
-                q["answer_index"] = opts.index(q["correct_answer_text"]) if q["correct_answer_text"] in opts else -1
+        if already_submitted:
+            # Check if admin allows retake
+            allowed = can_take_test(access_code, selected_subject, school_id)
+
+            if allowed:
+                st.success("🔁 Retake allowed by Admin. You can start again.")
             else:
-                q["options"] = []
+                col2.info("✅ You already submitted this test.")
+                st.warning("⚠️ Ask teacher for retake permission.")
+                st.stop()
 
-        st.session_state.update({
-            "test_started": True,
-            "submitted": False,
-            "questions": questions,
-            "answers": answers,
-            "current_q": saved_progress.get("current_q", 0),
-            "duration": saved_progress.get("duration", 1800),
-            "start_time": saved_progress.get("start_time", time.time()),
-            "marked_for_review": set(saved_progress.get("marked_for_review", [])),
-            "saved_to_db": False
-        })
+        else:
+            # Not submitted → allow a resume button
+            resume_clicked = col2.button("🔄 Resume Test", key=f"resume_btn_{selected_subject}")
 
-        st.session_state.test_end_time = datetime.fromtimestamp(
-            st.session_state.start_time + st.session_state.duration
+    # --------------------------------------------
+    # 2️⃣ Handle Start / Resume / Continue Session
+    # --------------------------------------------
+    if start_clicked or resume_clicked or st.session_state.get("test_started"):
+
+        st.session_state.test_started = True  # Allow test page to render
+
+        # Load duration from Admin Settings (fallback = 30 mins)
+        # Load duration from Admin Settings (fallback = 30 mins)
+        duration_minutes = get_test_duration(
+            class_name=class_name,
+            subject=selected_subject,
+            school_id=school_id,  # ✅ removed int() to avoid None crash
         )
 
-        st.success("✅ Resumed saved progress.")
-        st.rerun()
+        # Fallback if None or invalid
+        if not duration_minutes:
+            duration_minutes = 30
 
-    # ==============================
-    # Start New Test
-    # ==============================
-    if start_clicked:
-        allowed, msg = can_take_test(access_code, selected_subject)
-        if not allowed:
-            st.error(msg)
-            st.stop()
+        # --------------------------------------------
+        # 🟦 Fresh Start (User presses Start Test)
+        # --------------------------------------------
+        if start_clicked or "questions" not in st.session_state:
+            # Load questions depending on test type
+            st.session_state.questions = (
+                objective_questions
+                if st.session_state.test_type == "objective"
+                else subjective_questions
+            )
 
-        try:
-            decrement_retake(access_code, selected_subject)
-        except Exception:
-            pass
+            st.session_state.answers = [""] * len(st.session_state.questions)
+            st.session_state.current_q = 0
 
-        test_type = st.session_state.test_type
-        objective_qs = get_objective_questions(st.session_state.class_name, selected_subject, school_id) or []
-        subjective_qs = get_subjective_questions(st.session_state.class_name, selected_subject, school_id) or []
+            # Timing
+            st.session_state.start_time = datetime.now()
+            st.session_state.duration = duration_minutes * 60  # convert to seconds
+            st.session_state.test_end_time = (
+                    st.session_state.start_time + timedelta(seconds=st.session_state.duration)
+            )
 
-        questions = []
-        if test_type == "objective":
-            for q in objective_qs:
-                q["type"] = "objective"
-                questions.append(q)
-        elif test_type == "subjective":
-            for q in subjective_qs:
-                q["type"] = "subjective"
-                q["options"] = []
-                questions.append(q)
-        else:  # fallback mixed
-            for q in objective_qs:
-                q["type"] = "objective"
-                questions.append(q)
-            for q in subjective_qs:
-                q["type"] = "subjective"
-                q["options"] = []
-                questions.append(q)
+            # For marked-for-review
+            st.session_state.marked_for_review = set()
 
-        if not questions:
-            st.warning(f"No {test_type} questions found for {st.session_state.class_name} / {selected_subject}.")
-            st.stop()
+        # --------------------------------------------
+        # 🟩 Resume Test (Continue from save)
+        # --------------------------------------------
+        if resume_clicked and saved_progress:
 
-        # Randomize once
-        random.shuffle(questions)
+            st.session_state.questions = saved_progress.get(
+                "questions", st.session_state.questions
+            )
+            st.session_state.answers = saved_progress.get(
+                "answers", st.session_state.answers
+            )
+            st.session_state.current_q = saved_progress.get("current_q", 0)
 
-        # Prepare options and correct answers
-        for q in questions:
-            if q["type"] == "objective":
-                opts = q.get("options", [])
-                if not isinstance(opts, list):
-                    opts = [str(opts)]
-                correct_text = str(q.get("answer", "")).strip()
-                q["correct_answer_text"] = correct_text
-                random.shuffle(opts)
-                q["options"] = opts
-                q["answer_index"] = opts.index(correct_text) if correct_text in opts else -1
-                q.pop("answer", None)
+            saved_start_time = saved_progress.get("start_time")
+            if saved_start_time:
+                st.session_state.start_time = datetime.fromtimestamp(saved_start_time)
             else:
-                q["options"] = []
+                st.session_state.start_time = datetime.now()
 
-        duration_secs = get_test_duration(st.session_state.class_name, selected_subject, school_id) or 1800
+            st.session_state.duration = saved_progress.get(
+                "duration", duration_minutes * 60
+            )
 
-        st.session_state.update({
-            "test_id": str(uuid.uuid4()),
-            "test_started": True,
-            "submitted": False,
-            "questions": questions,
-            "answers": [""] * len(questions),
-            "current_q": 0,
-            "marked_for_review": set(),
-            "duration": duration_secs,
-            "start_time": time.time(),
-            "five_min_warned": False,
-            "saved_to_db": False
-        })
+            st.session_state.test_end_time = (
+                    st.session_state.start_time + timedelta(seconds=st.session_state.duration)
+            )
 
-        st.session_state.test_end_time = datetime.now() + timedelta(seconds=duration_secs)
-        st.success(f"✅ {test_type.capitalize()} test started — {int(duration_secs // 60)} minutes")
-        st.rerun()
+        # -------------------------
+        # Render Question
+        # -------------------------
+        questions = st.session_state.questions
+        q_index = st.session_state.current_q
+        q = questions[q_index]
+        q_type = q.get("type", st.session_state.test_type).lower()
 
-    # -------------------------
-    # Test In Progress
-    # -------------------------
-    if st.session_state.get("test_started") and not st.session_state.get("submitted"):
+        # Timer
         remaining = int(st.session_state.test_end_time.timestamp() - datetime.now().timestamp())
-        if remaining <= 0:
-            st.warning("⏰ Time is up! Submitting automatically...")
+        if remaining <= 0 and not st.session_state.get("submitted", False):
+            st.warning("⏰ Time is up! Auto-submitting your test...")
+
             st.session_state.submitted = True
-            save_progress(access_code, selected_subject, st.session_state.answers, st.session_state.current_q,
-                          st.session_state.start_time, st.session_state.duration, st.session_state.questions)
+
+            start_time_ts = (
+                st.session_state.start_time.timestamp()
+                if isinstance(st.session_state.start_time, datetime)
+                else st.session_state.start_time
+            )
+
+            save_progress(
+                access_code=access_code,
+                subject=selected_subject,
+                answers=st.session_state.answers,
+                current_q=st.session_state.current_q,
+                start_time=start_time_ts,
+                duration=st.session_state.duration,
+                questions=st.session_state.questions,
+                school_id=school_id,
+                test_type=st.session_state.test_type,
+                submitted=True  # Mark submitted since timeout
+            )
+
             st.rerun()
 
         mins, secs = divmod(remaining, 60)
@@ -509,52 +526,78 @@ def run_student_mode():
             unsafe_allow_html=True
         )
 
-        show_question_tracker(st.session_state.questions, st.session_state.current_q, st.session_state.answers)
-
-        questions = st.session_state.questions
-        q_index = st.session_state.current_q
-        q = questions[q_index]
-        q_type = q.get("type", "objective").lower()
-
+        show_question_tracker(questions, q_index, st.session_state.answers)
         st.markdown('<div class="card">', unsafe_allow_html=True)
+
         question_text = q.get("question_text") or q.get("question") or "No question text"
         st.markdown(f"### Q{q_index + 1}. {question_text}")
 
+        qid = q.get("id", q_index)
+        while len(st.session_state.answers) <= q_index:
+            st.session_state.answers.append("")
+
         if q_type == "objective":
             options = q.get("options", [])
-            placeholder = "Choose one:"
-            if placeholder not in options:
-                options = [placeholder] + options
-            selected = st.session_state.answers[q_index]
-            if selected not in options:
-                selected = placeholder
-            choice = st.radio("Choose one:", options, index=options.index(selected), key=f"q_{q_index}")
-            st.session_state.answers[q_index] = "" if choice == placeholder else choice
+            choice = st.radio(
+                "Choose one:",
+                options,
+                index=options.index(st.session_state.answers[q_index])
+                if st.session_state.answers[q_index] in options else 0,
+                key=f"q_{qid}"
+            )
+            st.session_state.answers[q_index] = choice
         else:
-            text_ans = st.text_area("Your answer:", value=st.session_state.answers[q_index], key=f"q_{q_index}")
+            text_ans = st.text_area("Your answer:", value=st.session_state.answers[q_index], key=f"q_{qid}")
             st.session_state.answers[q_index] = text_ans.strip()
 
-        mark_toggle = st.checkbox("🔖 Mark this question for review",
-                                  value=q_index in st.session_state.marked_for_review, key=f"mark_review_{q_index}")
+        mark_toggle = st.checkbox(
+            "🔖 Mark for review",
+            value=q_index in st.session_state.marked_for_review,
+            key=f"mark_review_{qid}"
+        )
         if mark_toggle:
             st.session_state.marked_for_review.add(q_index)
         else:
             st.session_state.marked_for_review.discard(q_index)
 
+        # Navigation
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
-            if st.button("⬅️ Previous", use_container_width=True, disabled=q_index == 0):
+            if st.button("⬅️ Previous", disabled=q_index == 0, key=f"prev_{qid}"):
                 st.session_state.current_q = max(0, q_index - 1)
-        with col2:
-            if st.button("➡️ Next", use_container_width=True, disabled=q_index == len(questions) - 1):
-                st.session_state.current_q = min(len(questions) - 1, q_index + 1)
-        with col3:
-            if st.button("✅ Submit Test", use_container_width=True):
-                st.session_state.submitted = True
-                save_progress(access_code, selected_subject, st.session_state.answers, st.session_state.current_q,
-                              st.session_state.start_time, st.session_state.duration, st.session_state.questions)
                 st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+
+        with col2:
+            if st.button("➡️ Next", disabled=q_index == len(questions) - 1, key=f"next_{qid}"):
+                st.session_state.current_q = min(len(questions) - 1, q_index + 1)
+                st.rerun()
+
+        with col3:
+            if st.button("✅ Submit Test", key=f"submit_{qid}"):
+                st.session_state.submitted = True
+
+                # Convert start_time to float timestamp
+                start_time_ts = (
+                    st.session_state.start_time.timestamp()
+                    if isinstance(st.session_state.start_time, datetime)
+                    else st.session_state.start_time
+                )
+
+                save_progress(
+                    access_code=access_code,
+                    subject=selected_subject,
+                    answers=st.session_state.answers,
+                    current_q=st.session_state.current_q,
+                    start_time=start_time_ts,  # ✅ float timestamp
+                    duration=st.session_state.duration,
+                    questions=st.session_state.questions,
+                    school_id=school_id,
+                    test_type=st.session_state.test_type,
+                    submitted=True  # ✅ Lock test as completed
+                )
+
+                st.success("✅ Test submitted successfully!")
+                st.rerun()
 
     # ==============================
     # After Submission: Score Calculation + Feedback

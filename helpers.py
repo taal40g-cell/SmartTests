@@ -148,7 +148,7 @@ def render_subjective_test(questions, subject):
     # === Question Box ===
     st.markdown(f"""
         <div style="background-color:#f9f9ff; padding:0.8rem; border-radius:10px; border:1px solid #e5e5e5; margin-bottom:12px;">
-            <b style="color:#34495e;">Q{q_index + 1}.</b> {q.get('question_text', '')} 
+          <b style="color:#34495e;">Q{q_index + 1}.</b> {q.get('question', '')}
             <span style="color:#7f8c8d;">({q.get('marks', 10)} marks)</span>
         </div>
     """, unsafe_allow_html=True)
@@ -424,35 +424,44 @@ def handle_subjective_submission(questions, subject):
         st.error("❌ Failed to submit subjective test.")
 
 
-from sqlalchemy import func
-import json
 
-# -------------------------------
-# Load Objective Questions
-# -------------------------------
-from models import Question  # adjust the path if needed
-
+# ====================================================
+# 🎯 Load Objective Questions
+# ====================================================
 def get_objective_questions(class_name: str, subject: str, school_id=None):
     from models import ObjectiveQuestion
     db = get_session()
     try:
-        normalized_class = class_name.replace(" ", "").lower()
-        normalized_subject = subject.replace(" ", "").lower()
+        normalized_class = class_name.strip().lower().replace(" ", "")
+        normalized_subject = subject.strip().lower().replace(" ", "")
+
+        print(f"\n🔍 OBJECTIVE DEBUG:")
+        print(f"Class: {class_name} | Subject: {subject} | School ID: {school_id}")
 
         query = db.query(ObjectiveQuestion)
+        total = query.count()
+        print(f"Total in table: {total}")
 
-        if school_id:
+        # School filter
+        if school_id and str(school_id).isdigit():
+            query = query.filter(ObjectiveQuestion.school_id == int(school_id))
+        elif school_id:
             query = query.filter(ObjectiveQuestion.school_id == school_id)
 
-        query = query.filter(
-            func.replace(func.lower(ObjectiveQuestion.class_name), " ", "") == normalized_class,
-            func.replace(func.lower(ObjectiveQuestion.subject), " ", "") == normalized_subject
-        )
-
         rows = query.all()
-        result = []
+        print(f"📊 After school filter: {len(rows)} found")
 
+        result_rows = []
         for q in rows:
+            db_class = (q.class_name or "").strip().lower().replace(" ", "")
+            db_subj = (q.subject or "").strip().lower().replace(" ", "")
+            if db_class == normalized_class and db_subj == normalized_subject:
+                result_rows.append(q)
+
+        print(f"✅ Matches after filter: {len(result_rows)}")
+
+        result = []
+        for q in result_rows:
             options = q.options
             if isinstance(options, str):
                 try:
@@ -465,10 +474,8 @@ def get_objective_questions(class_name: str, subject: str, school_id=None):
                 "question": q.question_text,
                 "options": options,
                 "answer": q.correct_answer,
-                "school_id": q.school_id,
                 "type": "objective"
             })
-
         return result
 
     except Exception as e:
@@ -478,40 +485,57 @@ def get_objective_questions(class_name: str, subject: str, school_id=None):
         db.close()
 
 
-# -------------------------------
-# Load Subjective Questions
-# -------------------------------
+# ====================================================
+# ✍️ Load Subjective Questions
+# ====================================================
 def get_subjective_questions(class_name: str, subject: str, school_id=None):
+    from models import SubjectiveQuestion
     db = get_session()
     try:
-        normalized_class = class_name.replace(" ", "").lower()
-        normalized_subject = subject.replace(" ", "").lower()
+        normalized_class = class_name.strip().lower().replace(" ", "")
+        normalized_subject = subject.strip().lower().replace(" ", "")
+
+        print(f"\n🔍 SUBJECTIVE DEBUG:")
+        print(f"Class: {class_name} | Subject: {subject} | School ID: {school_id}")
 
         query = db.query(SubjectiveQuestion)
+        total = query.count()
+        print(f"Total in table: {total}")
 
-        if school_id:
-            query = query.filter(SubjectiveQuestion.school_id == str(school_id))
+        # Normalize school_id to int if possible
+        if school_id and str(school_id).isdigit():
+            query = query.filter(SubjectiveQuestion.school_id == int(school_id))
+        elif school_id:
+            query = query.filter(SubjectiveQuestion.school_id == school_id)
 
-        query = query.filter(
-            func.replace(func.lower(SubjectiveQuestion.class_name), " ", "") == normalized_class,
-            func.replace(func.lower(SubjectiveQuestion.subject), " ", "") == normalized_subject
-        )
-
+        # Fetch all to debug
         rows = query.all()
+        print(f"📊 After school filter: {len(rows)} found")
+
+        # Apply class and subject filters manually
+        result_rows = []
+        for q in rows:
+            db_class = (q.class_name or "").strip().lower().replace(" ", "")
+            db_subj = (q.subject or "").strip().lower().replace(" ", "")
+            if db_class == normalized_class and db_subj == normalized_subject:
+                result_rows.append(q)
+
+        print(f"✅ Matches after filter: {len(result_rows)}")
+
         return [{
             "id": q.id,
             "question": q.question_text,
             "options": [],
             "answer": "",
+            "marks": q.marks,
             "type": "subjective"
-        } for q in rows]
+        } for q in result_rows]
 
     except Exception as e:
         print("❌ Error loading subjective questions:", e)
         return []
     finally:
         db.close()
-
 
 # -------------------------------
 # Load All Questions for a Test
