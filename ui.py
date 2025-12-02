@@ -439,3 +439,48 @@ def get_test_type(subject_name: str):
 
 
 
+from database import get_session
+from models import StudentProgress
+from sqlalchemy.orm import Session
+
+def get_saved_progress(access_code: str, subject: str, school_id: int, test_type: str = "objective") -> dict:
+    """
+    Returns saved progress for a student based on their access code, subject, school, and test type.
+    """
+    db: Session = get_session()
+    try:
+        progress = (
+            db.query(StudentProgress)
+            .filter_by(
+                access_code=access_code,
+                subject=subject,
+                school_id=school_id,
+                test_type=test_type
+            )
+            .first()
+        )
+        if progress:
+            return {
+                "questions": progress.questions or [],
+                "answers": progress.answers or [],
+                "current_q": progress.current_q or 0,
+                "submitted": progress.submitted or False,
+                "start_time": progress.start_time,
+                "duration": progress.duration,
+            }
+        return {}
+    finally:
+        db.close()
+
+
+
+
+def get_subject_id_by_name(subject_name: str) -> int | None:
+    """
+    Convert a subject name (string) to its subject_id (int) using cached subjects.
+    Returns None if not found.
+    """
+    return next(
+        (s["id"] for s in st.session_state.get("subjects", []) if s["name"] == subject_name),
+        None
+    )

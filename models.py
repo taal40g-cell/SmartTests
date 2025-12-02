@@ -116,12 +116,19 @@ class Subject(Base, TenantMixin):
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     class_name = Column(String(50), nullable=False)
+
+    # Add school_id for multi-tenant
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     questions = relationship("Question", back_populates="subject_rel", cascade="all, delete-orphan")
-    archived_questions = relationship("ArchivedQuestion", back_populates="subject_rel")  # ✅ added
+    archived_questions = relationship("ArchivedQuestion", back_populates="subject_rel")
     school = relationship("School", back_populates="subjects")
+
+    # 🔹 Relationship for Retakes
+    retakes = relationship("Retake", back_populates="subject", cascade="all, delete-orphan")
 
 # ================================================
 # QUESTIONS
@@ -174,14 +181,18 @@ class Retake(Base, TenantMixin):
 
     id = Column(Integer, primary_key=True)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
-    subject = Column(String(100), nullable=False)
-    can_retake = Column(Boolean, default=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
+    can_retake = Column(Boolean, default=False, server_default="0")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    __table_args__ = (UniqueConstraint("student_id", "subject", name="uq_retake_student_subject"),)
+    __table_args__ = (
+        UniqueConstraint("student_id", "subject_id", name="uq_retake_student_subject"),
+    )
 
     # Relationships
     student = relationship("Student", back_populates="retakes")
+    subject = relationship("Subject", back_populates="retakes")
     school = relationship("School", back_populates="retakes")
 
 # ================================================
@@ -218,15 +229,13 @@ class TestResult(Base, TenantMixin):
     student = relationship("Student", back_populates="test_results")
     school = relationship("School", back_populates="test_results")
 
-
-
 class StudentProgress(Base):
     __tablename__ = "student_progress"
 
     id = Column(Integer, primary_key=True)
     student_id = Column(Integer, ForeignKey("students.id"))
     access_code = Column(String(10), nullable=False)
-    subject = Column(String(100), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)  # ✅ changed to ID
     answers = Column(JSON, nullable=False, default=list)
     current_q = Column(Integer, default=0)
     start_time = Column(Float, nullable=False)
@@ -234,12 +243,14 @@ class StudentProgress(Base):
     questions = Column(JSON, nullable=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
     test_type = Column(String(20), nullable=False, default="objective")
-    submitted = Column(Boolean, default=False, nullable=False)  # ✅ Add this
+    submitted = Column(Boolean, default=False, nullable=False)
     last_saved = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
     student = relationship("Student", back_populates="progress")
     school = relationship("School")
+    subject_rel = relationship("Subject")  # Optional: link to subject table
+
 
 # ================================================
 # CONFIG
@@ -311,7 +322,7 @@ class SubjectiveQuestion(Base):
     __tablename__ = "subjective_questions"
 
     id = Column(Integer, primary_key=True)
-    school_id = Column(String, nullable=False)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False)
     class_name = Column(String, nullable=False)
     subject = Column(String(100), nullable=False)  # ✅ Add this line
     subject_id = Column(Integer, ForeignKey("subjects.id"))  # ✅ Keep this link

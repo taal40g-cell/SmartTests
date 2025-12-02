@@ -180,14 +180,48 @@ def run_admin_mode():
     CLASSES = load_classes() if 'load_classes' in globals() else ["JHS 1", "JHS 2", "JHS 3"]
     SUBJECTS = load_subjects() if 'load_subjects' in globals() else ["English", "Mathematics", "Science"]
 
-    # ==============================
-    # 🏫 Show Current School Context
-    # ==============================
-    current_school_id = get_current_school_id()
-    school_id = current_school_id
-    school_name = "Unknown School"
+    # ==========================================
+    # 🏫 Load School Context (Supports Super Admin)
+    # ==========================================
+    admin_role = st.session_state.get("admin_role", "")
+    current_user = st.session_state.get("admin_username", "")
 
-    if school_id:
+    school_id = None
+    school_name = "No School Assigned"
+
+    # 🔹 Super Admin can manage all schools
+    if admin_role == "super_admin":
+
+        schools = get_all_schools()  # could be tuples or ORM objects
+
+        selected_school = st.selectbox(
+            "Select School to Manage:",
+            schools,
+            format_func=lambda s: (
+                s.name if hasattr(s, "name") else s[1] if isinstance(s, tuple) else str(s)
+            )
+        )
+
+        if selected_school:
+            # Handle tuple OR ORM object
+            if isinstance(selected_school, tuple):
+                school_id = selected_school[0]
+                school_name = selected_school[1]
+            else:
+                school_id = selected_school.id
+                school_name = selected_school.name
+
+            # Save global
+            st.session_state["school_id"] = school_id
+
+    else:
+        # ⭐ FIX: fallback to session_state if available
+        school_id = st.session_state.get("school_id") or get_current_school_id()
+
+        if not school_id:
+            st.error("❌ No school ID found for current admin.")
+            st.stop()
+
         db = get_session()
         try:
             school = db.query(School).filter_by(id=school_id).first()
@@ -196,33 +230,27 @@ def run_admin_mode():
         finally:
             db.close()
 
-    admin_role = st.session_state.get("admin_role", "")
-    current_user = st.session_state.get("admin_username", "")
-
-    # 💡 Display School Header
+    # ==========================================
+    # 🏫 Display School Header
+    # ==========================================
     st.markdown(f"## 🏫 {school_name} — Admin Dashboard")
     st.caption(f"👤 Logged in as **{current_user} ({admin_role})**")
     st.divider()
 
-
-    # ==============================
-    # 🎛️ Modern Dashboard Navigation
-    # ==============================
-    # ✅ Define admin role safely inside function
-    admin_role = st.session_state.get("admin_role", "")
-    current_user = st.session_state.get("admin_username", "")
+    # ==========================================
+    # 🎛️ Dashboard Navigation Tabs
+    # ==========================================
     all_admins = get_all_admins(as_dict=True)
-
     current_role = all_admins.get(current_user, "admin")
     available_tabs = ROLE_TABS.get(current_role, ROLE_TABS["admin"])
 
-    st.markdown(f"### ⚙️ Admin Panel ({current_user} – {current_role})")
+    st.markdown(f"### ⚙️ {current_user} – {current_role}")
 
-    # --- Layout Settings ---
+    # Layout grid
     cols_per_row = 4
     rows = [available_tabs[i:i + cols_per_row] for i in range(0, len(available_tabs), cols_per_row)]
 
-    # --- Button Style (Global CSS once) ---
+    # Apply button CSS
     st.markdown("""
         <style>
         div[data-testid="stButton"] > button {
@@ -241,43 +269,28 @@ def run_admin_mode():
             color: white !important;
             transform: translateY(-2px);
         }
-        .active-btn {
-            background-color: #0066cc !important;
-            color: white !important;
-            font-weight: 600;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
         </style>
     """, unsafe_allow_html=True)
 
-    # --- Draw Buttons in Grid ---
+    # Track active tab
     if "selected_tab" not in st.session_state:
         st.session_state["selected_tab"] = available_tabs[0]
 
+    # Draw tab buttons
     for row in rows:
         cols = st.columns(len(row))
         for i, tab_name in enumerate(row):
-            active = st.session_state["selected_tab"] == tab_name
-            btn_container = cols[i]
-            with btn_container:
+            with cols[i]:
                 if st.button(tab_name, key=f"tab_{tab_name}", use_container_width=True):
                     st.session_state["selected_tab"] = tab_name
                     st.rerun()
-                # Apply active button styling using HTML marker
-                if active:
-                    st.markdown(
-                        f"<style>div[data-testid='stButton'][key='tab_{tab_name}'] button{{background-color:#0066cc;color:white;font-weight:600;}}</style>",
-                        unsafe_allow_html=True,
-                    )
 
-    # --- Get Selected Tab ---
+    # Active tab
     selected_tab = st.session_state["selected_tab"]
 
-    # --- Show Current Section Title ---
+    # Section title
     st.markdown(f"#### 🧭 Current Section: **{selected_tab}**")
     st.divider()
-    st.title("🛠️ SmartTest — Admin Dashboard")
-
 
     # =====================================================
     # 🏫 Manage Schools (Super Admin Only)
@@ -318,12 +331,15 @@ def run_admin_mode():
                     )
                     st.success(f"✅ Added School: {sname}")
 
-                    # Reset fields
-                    st.session_state["add_school_name"] = ""
-                    st.session_state["add_school_code"] = ""
+                    # Reset fields safely
+                    st.session_state.update({
+                        "add_school_name": "",
+                        "add_school_code": ""
+                    })
 
                     time.sleep(0.5)
                     st.rerun()
+
                 except Exception as e:
                     st.error(f"❌ Failed to add school: {e}")
 
@@ -1391,51 +1407,62 @@ def run_admin_mode():
             st.info(f"Student: {student.name} | Class: {student.class_name}")
             st.markdown("### Manage Retake Permissions")
 
-            # Load subjects for the school
+            # Load subjects (each subject is a dict: {"id": X, "name": Y})
             subjects = load_subjects(school_id=student.school_id)
             if not subjects:
                 st.warning("No subjects found for this school.")
                 st.stop()
 
             toggle_all = st.checkbox("Allow All Subjects", key="toggle_all_retake")
+
             subject_permissions = {}
 
             for subj in subjects:
-                # Load current permission from DB
-                allow_in_db = get_retake_db(code_input, subj, school_id=student.school_id)
+                subject_id = subj["id"]
+                subject_name = subj["name"]
 
-                # Default to False if no record exists
-                current_allow = bool(allow_in_db) if allow_in_db is not None else False
+                # Load current DB permission (now expecting int)
+                allow_in_db = get_retake_db(code_input, subject_id, school_id=student.school_id)
 
-                # If admin ticked "Allow All", override
+                # Convert DB value strictly to boolean
+                current_allow = bool(allow_in_db)
+
+                # Override if admin checked "Allow All"
                 if toggle_all:
                     current_allow = True
 
-                # Render checkbox for each subject
-                subject_permissions[subj] = st.checkbox(subj, value=current_allow, key=f"allow_{subj}")
+                # Render checkbox using subject name
+                subject_permissions[subject_id] = st.checkbox(
+                    label=subject_name,
+                    value=current_allow,
+                    key=f"allow_retake_{subject_id}"
+                )
 
-            # Save changes
+            # SAVE BUTTON
             if st.button("💾 Save Changes", key="save_retake_btn"):
-                for subj, allow in subject_permissions.items():
+                for subj in subjects:
+                    subject_id = subj["id"]
 
-                    # 1️⃣ Update retake permission in DB
+                    # Get checkbox value by subject_id
+                    allow = subject_permissions.get(subject_id, False)
+
+                    # Save retake permission
                     set_retake_db(
                         code_input,
-                        subj,
+                        subject_id,
                         can_retake=allow,
                         school_id=student.school_id
                     )
 
-                    # 2️⃣ If retake allowed → clear previous test attempt
+                    # If retake is enabled → clear old progress
                     if allow:
                         clear_progress(
                             access_code=code_input,
-                            subject=subj,
+                            subject_id=subject_id,
                             school_id=student.school_id
                         )
 
                 st.success(f"✅ Retake permissions updated for {student.name}.")
-
 
 
     # -----------------------

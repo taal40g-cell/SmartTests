@@ -441,15 +441,15 @@ def add_student_db(name, class_name, school_id, db=None):
         access_code = generate_access_code(db=db, school_id=school_id)
         unique_id = generate_unique_id(db=db, school_id=school_id)
 
-        # ✅ Use the correct field name ('class_name')
+        # ✅ FIX: include unique_id in the student model
         student = Student(
+            unique_id=unique_id,          # <-- THIS WAS MISSING
             name=name.strip(),
-            class_name=class_name,   # fixed from class_level → class_name
+            class_name=class_name,
             access_code=access_code,
             can_retake=True,
             submitted=False,
             school_id=school_id
-
         )
 
         db.add(student)
@@ -464,6 +464,8 @@ def add_student_db(name, class_name, school_id, db=None):
     finally:
         if close_db:
             db.close()
+
+
 
 def bulk_add_students_db(students_list, school_id, db=None):
     """Bulk add multiple students under the same school."""
@@ -1197,11 +1199,12 @@ def load_subjects(class_name: str | None = None, school_id: int | None = None):
 
         query = db.query(Subject).filter(Subject.school_id == school_id)
 
-        # ✅ Safeguard: only strip if it's a string
+        # Filter by class
         if isinstance(class_name, str) and class_name.strip():
             query = query.filter(Subject.class_name.ilike(class_name.strip()))
 
-        return [s.name for s in query.all()]
+        # Return list of dicts: [{"id": 1, "name": "English"}, ...]
+        return [{"id": s.id, "name": s.name} for s in query.all()]
 
     finally:
         db.close()
@@ -1501,29 +1504,58 @@ def reset_test(student_id: int):
     finally:
         db.close()
 
+def has_submitted_test(
+    access_code: str,
+    subject_id: int,
+    school_id: int,
+    test_type: str
+) -> bool:
 
-
-def has_submitted_test(access_code: str, subject: str) -> bool:
     db = get_session()
     try:
-        exists = (
-            db.query(TestResult)
-            .filter_by(access_code=access_code, subject=subject)
+        record = (
+            db.query(StudentProgress)
+            .filter(
+                StudentProgress.access_code == access_code,
+                StudentProgress.subject_id == subject_id,
+                StudentProgress.school_id == school_id,
+                StudentProgress.test_type == test_type,
+                StudentProgress.submitted == True
+            )
             .first()
         )
-        return exists is not None
+        return record is not None
+
     finally:
         db.close()
 
 
-def save_progress(access_code, subject, answers, current_q, start_time,
-                  duration, questions, school_id, test_type, student_id=None, submitted=False):
+def save_progress(
+    access_code,
+    subject_id,
+    answers,
+    current_q,
+    start_time,
+    duration,
+    questions,
+    school_id,
+    test_type,
+    student_id=None,
+    submitted=False
+):
+
+    def normalize_question(q):
+        if isinstance(q, (int, str)):
+            return q
+        return q.id
 
     db = get_session()
     try:
+        question_list = [normalize_question(q) for q in questions]
+
         existing = db.query(StudentProgress).filter_by(
             access_code=access_code,
-            subject=subject,
+            subject_id=subject_id,   # ✅ correct
             school_id=school_id,
             test_type=test_type
         ).first()
@@ -1533,48 +1565,44 @@ def save_progress(access_code, subject, answers, current_q, start_time,
             existing.current_q = current_q
             existing.start_time = float(start_time)
             existing.duration = int(duration)
-            existing.questions = questions
+            existing.questions = question_list
             existing.submitted = bool(submitted)
             if student_id:
                 existing.student_id = student_id
         else:
             db.add(StudentProgress(
                 access_code=access_code,
-                subject=subject,
+                subject_id=subject_id,   # ✅ changed
                 school_id=school_id,
                 test_type=test_type,
                 answers=answers,
                 current_q=current_q,
                 start_time=float(start_time),
                 duration=int(duration),
-                questions=questions,
+                questions=question_list,
                 student_id=student_id,
                 submitted=submitted
             ))
+
         db.commit()
+
     finally:
         db.close()
 
 
-# ==============================
-# ✅ Load Saved Progress (Objective + Subjective)
-# ==============================
 @st.cache_data(ttl=300)
 def load_progress(
     access_code: str,
-    subject: str,
+    subject_id: int,
     school_id: int | None = None,
     test_type: str = "objective"
 ) -> Optional[Dict]:
-    """
-    Load saved progress for a specific subject + test type directly from DB columns.
-    Returns None if no progress found.
-    """
+
     db = get_session()
     try:
         query = db.query(StudentProgress).filter_by(
             access_code=access_code,
-            subject=subject,
+            subject_id=subject_id,      # ✅ correct
             test_type=test_type
         )
 
@@ -1585,21 +1613,16 @@ def load_progress(
         if not record:
             return None
 
-        # Return progress using DB columns
         return {
             "answers": record.answers or [],
             "current_q": record.current_q or 0,
             "start_time": record.start_time or datetime.now().timestamp(),
-            "duration": record.duration or 1800,  # fallback 30 mins
+            "duration": record.duration or 1800,
             "questions": record.questions or [],
             "test_type": record.test_type,
             "submitted": record.submitted,
             "student_id": record.student_id,
         }
-
-    except SQLAlchemyError as e:
-        print("❌ Load progress error:", e)
-        return None
 
     finally:
         db.close()
@@ -1608,17 +1631,12 @@ def load_progress(
 # ==============================
 # ✅ Clear Progress After Submission
 # ==============================
-def clear_progress(access_code: str, subject: str, school_id: int | None = None, test_type: str | None = None):
-    """
-    Clear saved progress.
-    If test_type is provided, clear only that type.
-    If not provided, clear ALL progress for that subject.
-    """
+def clear_progress(access_code: str, subject_id: int, school_id: int | None = None, test_type: str | None = None):
     db = get_session()
     try:
         query = db.query(StudentProgress).filter_by(
             access_code=access_code,
-            subject=subject
+            subject_id=subject_id    # ✅ correct
         )
 
         if school_id:
@@ -1630,9 +1648,6 @@ def clear_progress(access_code: str, subject: str, school_id: int | None = None,
         query.delete()
         db.commit()
 
-    except SQLAlchemyError as e:
-        print("❌ Clear progress error:", e)
-        db.rollback()
     finally:
         db.close()
 
@@ -1707,8 +1722,8 @@ def add_school(name, address=None, code=None, db=None, return_dict=False):
             db.close()
 
 
-# ------------------------------
-# Get all schools (as dicts)
+## ------------------------------
+# Get all schools (returns School objects)
 # ------------------------------
 def get_all_schools(db=None):
     close_db = False
@@ -1717,6 +1732,7 @@ def get_all_schools(db=None):
         close_db = True
 
     try:
+        # Return the actual ORM objects
         return db.query(School).order_by(School.name.asc()).all()
     finally:
         if close_db:
@@ -1959,38 +1975,27 @@ def load_student_results(access_code: str, school_id=None):
         db.close()
 
 
-def can_take_test(access_code, subject, school_id):
+def can_take_test(access_code, subject_id, school_id):
     db = get_session()
     try:
         result = db.query(StudentProgress).filter_by(
             access_code=access_code,
-            subject=subject,
+            subject_id=subject_id,   # ✅ FIXED
             school_id=school_id
         ).first()
 
-        # --------------------------------------
-        # ✅ If no record → student never took test
-        # --------------------------------------
         if not result:
-            return True
+            return True  # Never took test
 
-        # --------------------------------------
-        # ✅ submitted is a Boolean column (NOT inside .data)
-        # --------------------------------------
         submitted = bool(getattr(result, "submitted", False))
 
-        # --------------------------------------
-        # ✅ If the test was started but NOT submitted → allow resume
-        # --------------------------------------
         if not submitted:
-            return True
+            return True  # Started but never submitted → allow resume
 
-        # --------------------------------------
-        # ⛔ If submitted → check if admin granted retake
-        # --------------------------------------
+        # Check admin retake
         retake = db.query(Retake).filter_by(
             student_id=result.student_id,
-            subject=subject,
+            subject_id=subject_id,   # ✅ FIXED
             school_id=school_id
         ).first()
 
@@ -2000,21 +2005,35 @@ def can_take_test(access_code, subject, school_id):
         db.close()
 
 
-
-def get_retake_db(access_code: str, subject: str, school_id=None) -> bool:
-    """Check if a student has retake permission for a subject (multi-tenant aware)."""
+def get_retake_db(access_code: str, subject_id: int, school_id: int = None) -> bool:
+    """
+    Check if a student has retake permission for a subject (multi-tenant aware).
+    Uses subject_id instead of subject text.
+    """
     db = get_session()
     try:
         student = db.query(Student).filter_by(access_code=access_code).first()
         if not student:
             return False
 
-        query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
-        if school_id:
+        # Ensure subject_id is always int (avoids dict or string errors)
+        try:
+            subject_id = int(subject_id)
+        except:
+            return False
+
+        query = db.query(Retake).filter_by(
+            student_id=student.id,
+            subject_id=subject_id
+        )
+
+        # Only filter on school_id if provided
+        if school_id is not None:
             query = query.filter(Retake.school_id == school_id)
 
         retake = query.first()
         return bool(retake and retake.can_retake)
+
     finally:
         db.close()
 
@@ -2044,9 +2063,10 @@ def decrement_retake(access_code: str, subject: str, school_id=None, test_type="
         db.close()
 
 
+
 def set_retake_db(
         access_code: str,
-        subject: str,
+        subject_id: int,
         can_retake: bool = True,
         school_id=None,
         auto_create_student=False,
@@ -2054,62 +2074,81 @@ def set_retake_db(
         class_name=None
 ):
     """
-    Create or update a student's retake permission for a subject (multi-tenant aware).
-
-    If auto_create_student=True, you must provide student_name and class_name.
+    Create or update a student's retake permission for a subject using subject_id.
     """
     db = get_session()
     try:
         access_code = str(access_code).strip()
+
+        # Convert IDs safely
+        try:
+            subject_id = int(subject_id)
+        except:
+            raise ValueError(f"Invalid subject_id: {subject_id}")
+
         school_id_int = int(school_id) if school_id is not None else None
 
-        # Query the student
+        # Find student
         query = db.query(Student).filter(func.trim(Student.access_code) == access_code)
         if school_id_int is not None:
             query = query.filter(Student.school_id == school_id_int)
 
         student = query.first()
 
-        # Auto-create student if missing
+        # Auto-create student if needed
         if not student and auto_create_student:
             if not student_name or not class_name:
                 raise ValueError(
-                    "student_name and class_name must be provided to auto-create a student."
+                    "student_name and class_name are required when auto_create_student=True."
                 )
             student = Student(
                 name=student_name.strip(),
                 access_code=access_code,
                 class_name=class_name.strip(),
-                school_id=school_id_int or 0
+                school_id=school_id_int or 0,
             )
             db.add(student)
             db.commit()
             db.refresh(student)
 
-            print(f"ℹ️ Created student '{student.name}' with access_code={access_code}")
-
         if not student:
-            raise ValueError(f"Invalid student access code '{access_code}' for school '{school_id}'")
+            raise ValueError(
+                f"Invalid student access code '{access_code}' for school '{school_id}'"
+            )
 
-        # Update or create Retake entry
-        retake_query = db.query(Retake).filter_by(student_id=student.id, subject=subject)
+        # --- Update / Create Retake entry ---
+        retake_query = db.query(Retake).filter(
+            Retake.student_id == student.id,
+            Retake.subject_id == subject_id
+        )
+
         if school_id_int is not None:
-            retake_query = retake_query.filter(Retake.school_id == school_id_int)
+            retake_query = retake_query.filter(
+                (Retake.school_id == school_id_int) | (Retake.school_id.is_(None))
+            )
 
-        retake = retake_query.first()
+        retake = retake_query.one_or_none()
 
         if retake:
             retake.can_retake = can_retake
+            # Fix missing school_id on legacy rows
+            if retake.school_id is None and school_id_int is not None:
+                retake.school_id = school_id_int
         else:
             retake = Retake(
                 student_id=student.id,
-                subject=subject,
-                can_retake=can_retake
+                subject_id=subject_id,
+                can_retake=can_retake,
+                school_id=school_id_int
             )
             db.add(retake)
-            db.commit()
 
-        print(f"✅ Retake set for {student.name} ({access_code}) in subject '{subject}'")
+        db.commit()
+
+        print(
+            f"🟢 Retake {'enabled' if can_retake else 'disabled'} for {student.name} "
+            f"({access_code}) | subject_id={subject_id}"
+        )
 
     except Exception as e:
         db.rollback()

@@ -2,6 +2,7 @@ import streamlit as st
 from database import get_session
 import time
 import json
+import random
 # -----------------------------------------------------
 # Add a new subjective question
 # -----------------------------------------------------
@@ -426,147 +427,122 @@ def handle_subjective_submission(questions, subject):
 
 
 # ====================================================
-# 🎯 Load Objective Questions
+# 🟦 FIXED + CLEANED: Load Objective Questions
 # ====================================================
-def get_objective_questions(class_name: str, subject: str, school_id=None):
-    from models import ObjectiveQuestion
+def get_objective_questions(class_name: str, subject: str | int, school_id=None):
+    from models import Question, Subject
     db = get_session()
+
     try:
-        normalized_class = class_name.strip().lower().replace(" ", "")
-        normalized_subject = subject.strip().lower().replace(" ", "")
+        # Normalize class
+        normalized_class = class_name.strip().lower().replace(" ", "").replace("-", "")
 
-        print(f"\n🔍 OBJECTIVE DEBUG:")
-        print(f"Class: {class_name} | Subject: {subject} | School ID: {school_id}")
+        # Determine subject_id
+        if isinstance(subject, int):
+            subject_obj = db.query(Subject).filter_by(id=subject, school_id=school_id).first()
+        else:
+            subject_obj = (
+                db.query(Subject)
+                .filter(func.lower(Subject.name) == subject.lower(), Subject.school_id == school_id)
+                .first()
+            )
+        if not subject_obj:
+            return []
 
-        query = db.query(ObjectiveQuestion)
-        total = query.count()
-        print(f"Total in table: {total}")
+        subject_id = subject_obj.id
 
-        # School filter
-        if school_id and str(school_id).isdigit():
-            query = query.filter(ObjectiveQuestion.school_id == int(school_id))
-        elif school_id:
-            query = query.filter(ObjectiveQuestion.school_id == school_id)
+        # Fetch objective questions (options not empty)
+        questions = (
+            db.query(Question)
+            .filter(
+                func.replace(func.lower(Question.class_name), " ", "") == normalized_class,
+                Question.subject_id == subject_id,
+                Question.school_id == school_id,
+                Question.archived == False,
+                Question.options != None,
+            )
+            .all()
+        )
 
-        rows = query.all()
-        print(f"📊 After school filter: {len(rows)} found")
+        # Only keep questions that actually have options >= 2
+        objective = [q for q in questions if q.options and len(q.options) >= 2]
 
-        result_rows = []
-        for q in rows:
-            db_class = (q.class_name or "").strip().lower().replace(" ", "")
-            db_subj = (q.subject or "").strip().lower().replace(" ", "")
-            if db_class == normalized_class and db_subj == normalized_subject:
-                result_rows.append(q)
-
-        print(f"✅ Matches after filter: {len(result_rows)}")
-
-        result = []
-        for q in result_rows:
-            options = q.options
-            if isinstance(options, str):
-                try:
-                    options = json.loads(options)
-                except:
-                    options = [options]
-
-            result.append({
-                "id": q.id,
-                "question": q.question_text,
-                "options": options,
-                "answer": q.correct_answer,
-                "type": "objective"
-            })
-        return result
+        return objective
 
     except Exception as e:
-        print("❌ Error loading objective questions:", e)
+        print("❌ ERROR in get_objective_questions:", e)
         return []
-    finally:
-        db.close()
-
 
 # ====================================================
-# ✍️ Load Subjective Questions
+# 🟩 DEBUG: Load Subjective Questions (FULL LOGGING)
 # ====================================================
-def get_subjective_questions(class_name: str, subject: str, school_id=None):
-    from models import SubjectiveQuestion
+from sqlalchemy import func
+def get_subjective_questions(class_name: str, subject: str | int, school_id=None):
+    from models import Question, Subject
     db = get_session()
+
     try:
-        normalized_class = class_name.strip().lower().replace(" ", "")
-        normalized_subject = subject.strip().lower().replace(" ", "")
+        # Normalize class
+        normalized_class = class_name.strip().lower().replace(" ", "").replace("-", "")
 
-        print(f"\n🔍 SUBJECTIVE DEBUG:")
-        print(f"Class: {class_name} | Subject: {subject} | School ID: {school_id}")
+        # Determine subject_id
+        if isinstance(subject, int):
+            subject_obj = db.query(Subject).filter_by(id=subject, school_id=school_id).first()
+        else:
+            subject_obj = (
+                db.query(Subject)
+                .filter(func.lower(Subject.name) == subject.lower(), Subject.school_id == school_id)
+                .first()
+            )
+        if not subject_obj:
+            return []
 
-        query = db.query(SubjectiveQuestion)
-        total = query.count()
-        print(f"Total in table: {total}")
+        subject_id = subject_obj.id
 
-        # Normalize school_id to int if possible
-        if school_id and str(school_id).isdigit():
-            query = query.filter(SubjectiveQuestion.school_id == int(school_id))
-        elif school_id:
-            query = query.filter(SubjectiveQuestion.school_id == school_id)
+        # Fetch subjective questions (options empty)
+        questions = (
+            db.query(Question)
+            .filter(
+                func.replace(func.lower(Question.class_name), " ", "") == normalized_class,
+                Question.subject_id == subject_id,
+                Question.school_id == school_id,
+                Question.archived == False,
+            )
+            .all()
+        )
 
-        # Fetch all to debug
-        rows = query.all()
-        print(f"📊 After school filter: {len(rows)} found")
+        subjective = [q for q in questions if not q.options or len(q.options) == 0]
 
-        # Apply class and subject filters manually
-        result_rows = []
-        for q in rows:
-            db_class = (q.class_name or "").strip().lower().replace(" ", "")
-            db_subj = (q.subject or "").strip().lower().replace(" ", "")
-            if db_class == normalized_class and db_subj == normalized_subject:
-                result_rows.append(q)
-
-        print(f"✅ Matches after filter: {len(result_rows)}")
-
-        return [{
-            "id": q.id,
-            "question": q.question_text,
-            "options": [],
-            "answer": "",
-            "marks": q.marks,
-            "type": "subjective"
-        } for q in result_rows]
+        return subjective
 
     except Exception as e:
-        print("❌ Error loading subjective questions:", e)
+        print("❌ ERROR in get_subjective_questions:", e)
         return []
-    finally:
-        db.close()
 
 # -------------------------------
 # Load All Questions for a Test
 # -------------------------------
-def load_test_questions(class_name: str, subject: str, school_id: int | None = None):
-    """Combine objective and subjective questions into a single shuffled list."""
-    objective_qs = get_objective_questions(class_name, subject, school_id)
-    subjective_qs = get_subjective_questions(class_name, subject, school_id)
+def load_questions_direct(class_name, subject_name, school_id):
+    from db_helpers import get_session, Question
+    from sqlalchemy import func
 
-    all_questions = objective_qs + subjective_qs
-    if not all_questions:
-        return []
+    db = get_session()
 
-    import random
-    random.shuffle(all_questions)
+    normalized_class = class_name.replace(" ", "").replace("-", "").lower()
+    normalized_subject = subject_name.lower().strip()
 
-    # Prepare each question for session
-    for q in all_questions:
-        if q["type"] == "objective":
-            opts = q.get("options", [])
-            correct_text = q.get("answer", "").strip()
-            random.shuffle(opts)
-            q["options"] = opts
-            q["correct_answer_text"] = correct_text
-            q["answer_index"] = opts.index(correct_text) if correct_text in opts else -1
-            q.pop("answer", None)
-        else:
-            q["options"] = []
+    questions = (
+        db.query(Question)
+        .filter(
+            func.replace(func.lower(Question.class_name), " ", "") == normalized_class,
+            func.lower(Question.subject) == normalized_subject,
+            Question.school_id == school_id,
+            Question.archived == False,
+        )
+        .all()
+    )
 
-    return all_questions
-
+    return questions
 
 
 def highlight_score(val):
@@ -590,3 +566,41 @@ def highlight_score(val):
         color = '#f7a6a6'  # Red for poor
 
     return f'background-color: {color}'
+
+
+def normalize_question(q):
+    """
+    Converts a Question object into a JSON-serializable dict
+    and cleans the options field so it never contains quotes,
+    parentheses, or multiline mess.
+    """
+
+    def clean_options(options):
+        if not options:
+            return []
+
+        # only a single string in the list?
+        if isinstance(options, list) and len(options) == 1 and isinstance(options[0], str):
+            return [o.strip() for o in options[0].split("\n") if o.strip()]
+
+        # raw single string
+        if isinstance(options, str):
+            return [o.strip() for o in options.split("\n") if o.strip()]
+
+        # already a list of strings
+        return [o.strip() for o in options if isinstance(o, str) and o.strip()]
+
+    # If q is already a dict, return it (but clean options)
+    if isinstance(q, dict):
+        if "options" in q:
+            q["options"] = clean_options(q["options"])
+        return q
+
+    # Otherwise assume it's a SQLAlchemy Question object
+    return {
+        "id": q.id,
+        "text": q.text,
+        "options": clean_options(q.options),
+        "category": getattr(q, "category", None),
+        "difficulty": getattr(q, "difficulty", None),
+    }
