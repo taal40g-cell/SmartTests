@@ -1503,32 +1503,31 @@ def reset_test(student_id: int):
         return False
     finally:
         db.close()
-
 def has_submitted_test(
     access_code: str,
     subject_id: int,
     school_id: int,
     test_type: str
 ) -> bool:
-
     db = get_session()
     try:
+        # Get the most recent progress record for this test
         record = (
             db.query(StudentProgress)
             .filter(
                 StudentProgress.access_code == access_code,
                 StudentProgress.subject_id == subject_id,
                 StudentProgress.school_id == school_id,
-                StudentProgress.test_type == test_type,
-                StudentProgress.submitted == True
+                StudentProgress.test_type == test_type
             )
+            .order_by(StudentProgress.id.desc())   # latest record
             .first()
         )
-        return record is not None
+
+        return record.submitted if record else False
 
     finally:
         db.close()
-
 
 def save_progress(
     access_code,
@@ -1974,32 +1973,37 @@ def load_student_results(access_code: str, school_id=None):
     finally:
         db.close()
 
-
 def can_take_test(access_code, subject_id, school_id):
     db = get_session()
     try:
-        result = db.query(StudentProgress).filter_by(
+        # Load student
+        from models import Student, StudentProgress
+
+        student = db.query(Student).filter_by(
             access_code=access_code,
-            subject_id=subject_id,   # ✅ FIXED
             school_id=school_id
         ).first()
 
-        if not result:
-            return True  # Never took test
+        if not student:
+            return False
 
-        submitted = bool(getattr(result, "submitted", False))
-
-        if not submitted:
-            return True  # Started but never submitted → allow resume
-
-        # Check admin retake
-        retake = db.query(Retake).filter_by(
-            student_id=result.student_id,
-            subject_id=subject_id,   # ✅ FIXED
+        # Check all attempts for that subject
+        attempts = db.query(StudentProgress).filter_by(
+            access_code=access_code,
+            subject_id=subject_id,
             school_id=school_id
-        ).first()
+        ).all()
 
-        return bool(retake and retake.can_retake)
+        # No attempt → allow first test
+        if not attempts:
+            return True
+
+        # If any attempt is not submitted → allow resume
+        if any(not a.submitted for a in attempts):
+            return True
+
+        # All attempts submitted → require admin retake
+        return bool(student.can_retake)
 
     finally:
         db.close()
@@ -2037,28 +2041,32 @@ def get_retake_db(access_code: str, subject_id: int, school_id: int = None) -> b
     finally:
         db.close()
 
-
-def decrement_retake(access_code: str, subject: str, school_id=None, test_type="objective"):
-    """Mark that a student has started this test type, preventing duplicate attempts."""
+def decrement_retake(student_id: int, subject_id: int, school_id: int):
     db = get_session()
     try:
-        from models import StudentProgress
+        progress = db.query(StudentProgress).filter_by(
+            student_id=student_id,
+            subject_id=subject_id,
+            school_id=school_id
+        ).first()
 
-        query = db.query(StudentProgress).filter_by(
-            access_code=access_code,
-            subject=subject,
-            test_type=test_type
-        )
-        if school_id:
-            query = query.filter_by(school_id=school_id)
-        record = query.first()
+        if progress:
+            progress.submitted = True
 
-        if record:
-            record.submitted = True  # mark as completed for this test type
-            db.commit()
+        # Disable retake automatically after use
+        retake = db.query(Retake).filter_by(
+            student_id=student_id,
+            subject_id=subject_id,
+            school_id=school_id
+        ).first()
+
+        if retake:
+            retake.can_retake = False
+
+        db.commit()
     except Exception as e:
-        print("❌ decrement_retake error:", e)
         db.rollback()
+        print("❌ decrement_retake error:", e)
     finally:
         db.close()
 

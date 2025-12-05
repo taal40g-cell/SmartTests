@@ -364,25 +364,39 @@ def run_student_mode():
     start_clicked = col1.button("🚀 Start Test", key=f"start_btn_{selected_subject_id}")
     resume_clicked = False
 
-    # Check if student already submitted this test
-    already_done = has_submitted_test(
+    db = get_session()
+    try:
+        record = record_query.first()
+
+        # READ submitted before closing
+        already_done = bool(record and record.submitted)
+
+    finally:
+        db.close()
+
+    # TRUE if admin has granted retake
+    retake_allowed = can_take_test(
         access_code,
         selected_subject_id,
-        school_id_int,
-        test_type
+        school_id_int
     )
 
-    if already_done:
-        if can_take_test(access_code, selected_subject_id, school_id_int):  # ✅ uses ID now
-            st.success("🔁 Retake allowed by Admin.")
-        else:
-            st.error("❌ You have already completed this test.")
-            st.stop()
+    # BLOCK
+    if already_done and not retake_allowed:
+        st.error("❌ You have already completed this test. Retake not allowed.")
+        st.stop()
 
-    # Allow resume only if previous attempt NOT submitted
+    # RETAKE ALLOWED
+    if already_done and retake_allowed:
+        st.success("🔁 Retake allowed by Admin. You may start again.")
+
+    # ----------------------------------------------------
+    # Resume logic ONLY if not submitted before
+    # ----------------------------------------------------
     if saved_progress and not saved_progress.get("submitted", False):
         resume_clicked = col2.button("🔄 Resume Test", key=f"resume_btn_{selected_subject_id}")
-
+    else:
+        resume_clicked = False
     # -------------------------
     # 6️⃣ Fresh Start / Resume
     # -------------------------
@@ -438,8 +452,6 @@ def run_student_mode():
                     st.session_state.start_time + timedelta(seconds=st.session_state.duration)
             )
 
-
-        import re
 
         # -------------------------
         # Safe options parser + cleaner
@@ -549,8 +561,10 @@ def run_student_mode():
 
         with col3:
             if st.button("✅ Submit Test", key=f"submit_{current_q_idx}"):
+
                 st.session_state.submitted = True
 
+                # Convert start_time to timestamp if needed
                 start_time_ts = (
                     st.session_state.start_time.timestamp()
                     if isinstance(st.session_state.start_time, datetime)
@@ -567,20 +581,46 @@ def run_student_mode():
                     st.error(f"Could not find subject ID for '{selected_subject}'")
                     st.stop()
 
+                # ------------------------------------
+                # 1️⃣ Save final progress
+                # ------------------------------------
                 save_progress(
                     access_code=access_code,
-                    subject_id=subject_id,  # ✅ pass ID, not name
+                    subject_id=subject_id,
                     answers=st.session_state.answers,
                     current_q=st.session_state.current_q,
                     start_time=start_time_ts,
                     duration=st.session_state.duration,
                     questions=st.session_state.questions,
-                    school_id=school_id,
+                    school_id=school_id_int,
                     test_type=st.session_state.test_type,
                     submitted=True
                 )
 
-                # Show final message and lock the test
+                # ------------------------------------
+                # 2️⃣ CONSUME RETAKE (CRITICAL FIX)
+                # ------------------------------------
+                from models import Student
+                db = get_session()
+                try:
+                    student_row = db.query(Student).filter_by(
+                        access_code=access_code,
+                        school_id=school_id_int
+                    ).first()
+
+                    # 🔒 If student had retake permission → consume it
+                    if student_row:
+                        # ⛔ Always block after a submission
+                        student_row.can_retake = False
+                        db.commit()
+
+
+                finally:
+                    db.close()
+
+                # ------------------------------------
+                # 3️⃣ Final UI messages
+                # ------------------------------------
                 mins, secs = divmod(0, 60)
                 st.markdown(
                     f"<div style='text-align:right; font-size:20px; color:#f44336;'>⏱️ Time Left: {mins:02d}:{secs:02d}</div>",
@@ -590,7 +630,9 @@ def run_student_mode():
                 st.success("✅ Test submitted successfully!")
                 st.warning("⛔ Retake not allowed. Please contact your teacher.")
 
-                # 🔒 Lock down the entire test interface
+                # ------------------------------------
+                # 4️⃣ HARD LOCK TEST UI
+                # ------------------------------------
                 st.session_state.test_started = False
                 st.session_state.questions = []
                 st.session_state.answers = []
