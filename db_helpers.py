@@ -193,6 +193,10 @@ def ensure_super_admin_exists():
     """
     db = get_session()
     try:
+        if not db:
+            print("❌ Database session could not be created.")
+            return
+
         admin = db.query(Admin).filter_by(username="super_admin").first()
 
         if not admin:
@@ -207,16 +211,44 @@ def ensure_super_admin_exists():
             db.commit()
             print("✅ Created default super_admin (username=super_admin, password=1234)")
         else:
-            # Only fix the role if it's wrong — no password reset
             if admin.role != "super_admin":
                 admin.role = "super_admin"
                 db.commit()
                 print("🔄 Fixed super_admin role (password unchanged).")
     except Exception as e:
-        db.rollback()
+        if db:
+            db.rollback()
         print(f"Error ensuring super_admin: {e}")
     finally:
-        db.close()
+        if db:        # <-- 🚀 FIXED HERE
+            db.close()
+
+
+
+# =====================================
+# SAFE FALLBACK SESSION (DOES NOT CRASH)
+# =====================================
+class SafeNullSession:
+    """A dummy session object used when the DB connection fails.
+    Every method returns itself or harmless defaults so calls never crash.
+    """
+    def commit(self): pass
+    def rollback(self): pass
+    def close(self): pass
+    def add(self, *a, **k): pass
+    def delete(self, *a, **k): pass
+
+    # SQLAlchemy-like chainable methods
+    def query(self, *a, **k): return self
+    def filter(self, *a, **k): return self
+    def filter_by(self, *a, **k): return self
+    def order_by(self, *a, **k): return self
+
+    # Safe output methods
+    def all(self): return []
+    def first(self): return None
+    def count(self): return 0
+
 
 
 # ✅ Run on module load
@@ -752,48 +784,66 @@ def handle_uploaded_questions(class_name, subject, valid_questions, school_id=No
     finally:
         db.close()
 
+
+
 @st.cache_data(ttl=60)
 def load_questions_db(class_name: str, subject: str, school_id=None, limit: int = 30) -> list[dict]:
-    """Robust question loader that handles case, whitespace, and mixed formatting in DB."""
+    """Load questions safely, handles normalization and type issues."""
+
     db = get_session()
     try:
-        # Auto-detect school_id if missing
         if not school_id:
-            school_id = get_current_school_id()
+            school_id = int(get_current_school_id() or 0)
 
         if not class_name or not subject:
             print("⚠️ Missing class_name or subject in load_questions_db:", class_name, subject)
             return []
 
-        # Normalize inputs
-        class_key = class_name.lower().replace(" ", "")   # removes spaces (jhs 1 → jhs1)
-        subject_key = subject.lower().strip()             # english → english
+        # Normalize class
+        class_key = class_name.lower().replace(" ", "").replace("-", "")
 
-        # Build robust query
-        query = db.query(Question).filter(
-            func.replace(func.lower(Question.class_name), ' ', '') == class_key,
-            func.lower(Question.subject) == subject_key
+        # STEP 1: Get subject_id
+        subject_obj = (
+            db.query(Subject)
+            .filter(
+                Subject.school_id == int(school_id),
+                func.replace(func.lower(Subject.class_name), ' ', '') == class_key,
+                func.lower(Subject.name) == subject.lower().strip()
+            )
+            .first()
         )
 
-        if school_id:
-            query = query.filter(Question.school_id == school_id)
+        if not subject_obj:
+            print(f"❌ Subject not found: {subject} / {class_name} / school_id={school_id}")
+            return []
 
-        # Random selection
+        subject_id = subject_obj.id
+
+        # STEP 2: Load questions
+        query = db.query(Question).filter(
+            Question.school_id == int(school_id),
+            Question.subject_id == subject_id,
+        )
+
         questions = query.order_by(func.random()).limit(limit).all()
 
         result = []
         for q in questions:
-            # Parse options safely
-            try:
-                opts = json.loads(q.options) if isinstance(q.options, str) else q.options
-            except Exception:
-                opts = []
+            opts = []
+            if hasattr(q, "options") and q.options:
+                if isinstance(q.options, str):
+                    try:
+                        opts = json.loads(q.options)
+                    except Exception:
+                        opts = [opt.strip() for opt in q.options.split(",") if opt.strip()]
+                elif isinstance(q.options, list):
+                    opts = q.options
 
             result.append({
                 "id": q.id,
-                "question_text": q.question_text,
+                "question_text": getattr(q, "question_text", getattr(q, "question", "")),
                 "options": opts,
-                "answer": q.answer,
+                "answer": getattr(q, "answer", ""),
                 "type": getattr(q, "type", "objective"),
                 "subject_id": q.subject_id,
                 "school_id": q.school_id
@@ -807,6 +857,7 @@ def load_questions_db(class_name: str, subject: str, school_id=None, limit: int 
 
     finally:
         db.close()
+
 
 def delete_student_db(student_identifier, school_id=None):
     """
@@ -1189,51 +1240,70 @@ def clear_questions_db(school_id=None):
         db.close()
 
 
-
 def load_subjects(class_name: str | None = None, school_id: int | None = None):
-    """Load subjects automatically filtered by current school."""
     db = get_session()
+
+    if db is None:
+        print("❌ get_session() returned None in load_subjects()")
+        return []
+
     try:
         if not school_id:
             school_id = get_current_school_id()
 
         query = db.query(Subject).filter(Subject.school_id == school_id)
 
-        # Filter by class
+        # -----------------------------
+        # FIXED: Normalize class name
+        # -----------------------------
         if isinstance(class_name, str) and class_name.strip():
-            query = query.filter(Subject.class_name.ilike(class_name.strip()))
+            norm = (
+                class_name.lower()
+                .replace(" ", "")
+                .replace("-", "")
+                .strip()
+            )
 
-        # Return list of dicts: [{"id": 1, "name": "English"}, ...]
-        return [{"id": s.id, "name": s.name} for s in query.all()]
+            # Pure SQL LIKE — no REPLACE(type errors)
+            query = query.filter(
+                func.lower(Subject.class_name).like(f"%{norm}%")
+            )
+
+        subjects = query.all()
+
+        return [{"id": s.id, "name": s.name} for s in subjects]
 
     finally:
-        db.close()
+        if db:
+            db.close()
+
 
 def save_subjects(subjects: list, class_name: str | None = None):
-    """Safely save (add/update) subjects without deleting linked ones."""
     db = get_session()
+
+    if db is None:
+        st.session_state["subject_msg"] = ("error", "❌ Database session failed.")
+        return False
+
     try:
         school_id = get_current_school_id()
         if not school_id:
-            st.session_state["subject_msg"] = ("error", "❌ No school ID found for current admin.")
+            st.session_state["subject_msg"] = ("error", "❌ No school ID found.")
             return False
 
         if not class_name:
-            st.session_state["subject_msg"] = ("error", "⚠️ Please select a valid class before saving subjects.")
+            st.session_state["subject_msg"] = ("error", "⚠️ Please select a class.")
             return False
 
-        # Normalize input
         new_subjects = sorted(set([str(x).strip() for x in subjects if str(x).strip()]))
 
-        # Get existing subjects for this class & school
         existing_subjects = {
             s.name.lower(): s
             for s in db.query(Subject)
-            .filter(
-                Subject.school_id == school_id,
-                Subject.class_name.ilike(class_name.strip())
-            )
-            .all()
+                .filter(
+                    Subject.school_id == school_id,
+                    Subject.class_name.ilike(class_name.strip())
+                ).all()
         }
 
         added = 0
@@ -1244,25 +1314,32 @@ def save_subjects(subjects: list, class_name: str | None = None):
 
         db.commit()
 
-        msg = f"✅ {added} new subject(s) added for {class_name}." if added > 0 else f"ℹ️ No new subjects to add for {class_name}."
+        msg = f"✅ {added} new subject(s) added." if added else "ℹ️ No new subjects."
         st.session_state["subject_msg"] = ("success", msg)
         st.session_state["last_updated_class"] = class_name.strip()
         return True
 
     except Exception as e:
-        db.rollback()
-        st.session_state["subject_msg"] = ("error", f"❌ Error saving subjects: {e}")
+        if db:
+            db.rollback()
+        st.session_state["subject_msg"] = ("error", f"❌ Error: {e}")
         return False
 
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 def delete_subject(subject_name: str, school_id: int | None = None, class_name: str | None = None):
-    """Delete a subject safely by name, class, and school."""
     db = get_session()
+
+    if db is None:
+        st.error("❌ Database session failed.")
+        return False
+
     try:
         query = db.query(Subject).filter(Subject.name.ilike(subject_name.strip()))
+
         if school_id:
             query = query.filter(Subject.school_id == school_id)
         if class_name:
@@ -1270,10 +1347,9 @@ def delete_subject(subject_name: str, school_id: int | None = None, class_name: 
 
         subject = query.first()
         if not subject:
-            st.warning(f"⚠️ Subject '{subject_name}' not found for {class_name}.")
+            st.warning(f"⚠️ Subject '{subject_name}' not found.")
             return False
 
-        # Check linked questions (by name + class + school)
         linked_questions = db.query(Question).filter(
             Question.subject.ilike(subject_name.strip()),
             Question.class_name.ilike(class_name.strip()),
@@ -1281,21 +1357,23 @@ def delete_subject(subject_name: str, school_id: int | None = None, class_name: 
         ).count()
 
         if linked_questions > 0:
-            st.warning(f"⚠️ Cannot delete '{subject_name}' — {linked_questions} question(s) linked.")
+            st.warning(f"⚠️ Cannot delete — {linked_questions} linked question(s).")
             return False
 
         db.delete(subject)
         db.commit()
-        st.success(f"✅ Subject '{subject_name}' deleted successfully for {class_name}.")
+        st.success(f"✅ Deleted '{subject_name}'.")
         st.rerun()
-        return True
 
     except Exception as e:
-        db.rollback()
+        if db:
+            db.rollback()
         st.error(f"❌ Error deleting subject: {e}")
         return False
+
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 
@@ -1365,7 +1443,6 @@ def update_student_db(student_id, new_name, new_class):
 # ==============================
 # 📝 Submission Helpers
 # ==============================
-
 def clear_submissions_db(school_id=None):
     """
     Delete submissions.
@@ -1398,12 +1475,6 @@ def normalize_code(code: str) -> str:
 
 
 from datetime import datetime
-from datetime import datetime
-from sqlalchemy.orm import Session
-
-from datetime import datetime
-from sqlalchemy.orm import Session
-
 def archive_question(session: Session, question_id: int) -> bool:
     """Move a question from 'questions' to 'archived_questions'."""
     try:
@@ -1503,6 +1574,10 @@ def reset_test(student_id: int):
         return False
     finally:
         db.close()
+
+
+
+
 def has_submitted_test(
     access_code: str,
     subject_id: int,
@@ -1529,6 +1604,7 @@ def has_submitted_test(
     finally:
         db.close()
 
+
 def save_progress(
     access_code,
     subject_id,
@@ -1546,20 +1622,25 @@ def save_progress(
     def normalize_question(q):
         if isinstance(q, (int, str)):
             return q
-        return q.id
+        return getattr(q, "id", q)
 
     db = get_session()
     try:
         question_list = [normalize_question(q) for q in questions]
 
+        # ----------------------------------------------------
+        # 🔥 IMPORTANT FIX:
+        # Load record by ALL UNIQUE KEYS so test types do not mix
+        # ----------------------------------------------------
         existing = db.query(StudentProgress).filter_by(
             access_code=access_code,
-            subject_id=subject_id,   # ✅ correct
+            subject_id=subject_id,
             school_id=school_id,
-            test_type=test_type
+            test_type=test_type     # <-- FIXED
         ).first()
 
         if existing:
+            # Update only this record (Objective or Subjective)
             existing.answers = answers
             existing.current_q = current_q
             existing.start_time = float(start_time)
@@ -1568,10 +1649,13 @@ def save_progress(
             existing.submitted = bool(submitted)
             if student_id:
                 existing.student_id = student_id
+
         else:
-            db.add(StudentProgress(
+            # Create fresh progress row FOR THIS test type only
+            new_record = StudentProgress(
                 access_code=access_code,
-                subject_id=subject_id,   # ✅ changed
+                student_id=student_id,
+                subject_id=subject_id,
                 school_id=school_id,
                 test_type=test_type,
                 answers=answers,
@@ -1579,9 +1663,9 @@ def save_progress(
                 start_time=float(start_time),
                 duration=int(duration),
                 questions=question_list,
-                student_id=student_id,
-                submitted=submitted
-            ))
+                submitted=submitted,
+            )
+            db.add(new_record)
 
         db.commit()
 
@@ -1589,24 +1673,21 @@ def save_progress(
         db.close()
 
 
-@st.cache_data(ttl=300)
+
 def load_progress(
     access_code: str,
     subject_id: int,
-    school_id: int | None = None,
-    test_type: str = "objective"
-) -> Optional[Dict]:
-
+    school_id: int | None,
+    test_type: str
+):
     db = get_session()
     try:
         query = db.query(StudentProgress).filter_by(
             access_code=access_code,
-            subject_id=subject_id,      # ✅ correct
+            subject_id=subject_id,
+            school_id=school_id,
             test_type=test_type
         )
-
-        if school_id is not None:
-            query = query.filter(StudentProgress.school_id == school_id)
 
         record = query.first()
         if not record:
@@ -1630,18 +1711,24 @@ def load_progress(
 # ==============================
 # ✅ Clear Progress After Submission
 # ==============================
-def clear_progress(access_code: str, subject_id: int, school_id: int | None = None, test_type: str | None = None):
+def clear_progress(
+    access_code: str,
+    subject_id: int,
+    school_id: int | None = None,
+    test_type: str | None = None
+):
     db = get_session()
     try:
         query = db.query(StudentProgress).filter_by(
             access_code=access_code,
-            subject_id=subject_id    # ✅ correct
+            subject_id=subject_id
         )
 
-        if school_id:
+        if school_id is not None:
             query = query.filter(StudentProgress.school_id == school_id)
 
-        if test_type:
+        # 🔥 ALWAYS filter by test_type
+        if test_type is not None:
             query = query.filter(StudentProgress.test_type == test_type)
 
         query.delete()
@@ -1973,11 +2060,10 @@ def load_student_results(access_code: str, school_id=None):
     finally:
         db.close()
 
-def can_take_test(access_code, subject_id, school_id):
+def can_take_test(access_code, subject_id, school_id, test_type):
     db = get_session()
     try:
-        # Load student
-        from models import Student, StudentProgress
+        from models import Student, StudentProgress, Retake
 
         student = db.query(Student).filter_by(
             access_code=access_code,
@@ -1987,23 +2073,29 @@ def can_take_test(access_code, subject_id, school_id):
         if not student:
             return False
 
-        # Check all attempts for that subject
+        # ✅ isolate attempts by test type
         attempts = db.query(StudentProgress).filter_by(
-            access_code=access_code,
+            student_id=student.id,
             subject_id=subject_id,
-            school_id=school_id
+            school_id=school_id,
+            test_type=test_type
         ).all()
 
-        # No attempt → allow first test
         if not attempts:
             return True
 
-        # If any attempt is not submitted → allow resume
         if any(not a.submitted for a in attempts):
             return True
 
-        # All attempts submitted → require admin retake
-        return bool(student.can_retake)
+        # 🔒 retake applies to subject
+        retake = db.query(Retake).filter_by(
+            student_id=student.id,
+            subject_id=subject_id,
+            school_id=school_id,
+            can_retake=True
+        ).first()
+
+        return bool(retake)
 
     finally:
         db.close()

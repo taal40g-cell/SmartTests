@@ -123,118 +123,6 @@ def get_student_subjective_results(student_id, school_id):
         db.close()
 
 
-def render_subjective_test(questions, subject):
-    """Render one-question-per-page subjective test with compact buttons."""
-    st.markdown(
-        f"<h3 style='text-align:center; color:#2c3e50;'>✍️ {subject} — Subjective Test</h3>",
-        unsafe_allow_html=True
-    )
-
-    # === Initialize session ===
-    st.session_state.setdefault("page", 1)
-    total_questions = len(questions)
-    st.session_state.setdefault("subj_answers", [""] * total_questions)
-    st.session_state.setdefault("subj_files", [None] * total_questions)
-
-    # === Ensure equal array lengths ===
-    st.session_state.subj_answers = st.session_state.subj_answers[:total_questions] + [""] * max(0, total_questions - len(st.session_state.subj_answers))
-    st.session_state.subj_files = st.session_state.subj_files[:total_questions] + [None] * max(0, total_questions - len(st.session_state.subj_files))
-
-    # === Pagination ===
-    page = max(1, min(st.session_state.page, total_questions))
-    st.session_state.page = page
-    q_index = page - 1
-    q = questions[q_index]
-
-    # === Question Box ===
-    st.markdown(f"""
-        <div style="background-color:#f9f9ff; padding:0.8rem; border-radius:10px; border:1px solid #e5e5e5; margin-bottom:12px;">
-          <b style="color:#34495e;">Q{q_index + 1}.</b> {q.get('question', '')}
-            <span style="color:#7f8c8d;">({q.get('marks', 10)} marks)</span>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # === Answer field ===
-    st.session_state.subj_answers[q_index] = st.text_area(
-        "✏️ Your Answer:",
-        value=st.session_state.subj_answers[q_index],
-        height=120,
-        key=f"subj_text_{q_index}"
-    ).strip()
-
-    # === Optional file upload ===
-    st.session_state.subj_files[q_index] = st.file_uploader(
-        "📎 Upload (optional)",
-        type=["jpg", "jpeg", "png", "pdf", "docx"],
-        key=f"subj_file_{q_index}"
-    )
-
-    # === Navigation buttons (compact centered layout) ===
-    st.markdown("<br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 1.2, 1])
-    with col1:
-        if page > 1:
-            if st.button("⬅ Prev", key=f"prev_{q_index}"):
-                st.session_state.page -= 1
-                st.rerun()
-
-    with col2:
-        st.markdown(
-            f"<div style='text-align:center; color:#6c757d; font-size:0.85rem;'>Question {q_index + 1} of {total_questions}</div>",
-            unsafe_allow_html=True
-        )
-
-    with col3:
-        if page < total_questions:
-            if st.button("Next ➡", key=f"next_{q_index}"):
-                st.session_state.page += 1
-                st.rerun()
-        else:
-            if st.button("🎯 Submit Test", key="submit_final"):
-                handle_subjective_submission(questions, subject)
-
-    # =========================================
-    # Sleek Fully-Rounded (Pill) Button Styling
-    # =========================================
-
-    # =========================================
-    # Pagination Buttons (Centered + Slim)
-    # =========================================
-    # === Navigation Buttons ===
-    col1, col2, col3 = st.columns([1, 1, 1])
-
-    # PREV BUTTON
-    with col1:
-        if st.session_state.page > 0:
-            st.button(
-                "⬅ Prev",
-                key=f"subj_prev_{page}",
-                on_click=lambda: setattr(st.session_state, "page", st.session_state.page - 1)
-            )
-
-    # QUESTION COUNTER
-    with col2:
-        st.markdown(
-            f"<div style='text-align:center;font-weight:600;'>Question {q_index + 1} of {total_questions}</div>",
-            unsafe_allow_html=True
-        )
-
-    # NEXT / SUBMIT BUTTON
-    with col3:
-        if page < total_questions - 1:
-            st.button(
-                "Next ➡",
-                key=f"subj_next_{page}",
-                on_click=lambda: setattr(st.session_state, "page", st.session_state.page + 1)
-            )
-        else:
-            st.markdown('<div class="submit-btn" style="text-align:center;">', unsafe_allow_html=True)
-            st.button(
-                "✅ Submit Test",
-                key="subj_submit_final",
-                on_click=lambda: handle_subjective_submission(questions, subject)
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
 
 
 # =============================================
@@ -417,27 +305,59 @@ def handle_subjective_submission(questions, subject):
     )
 
     if submission_id:
+        from models import StudentProgress
+        import time
+
+        db = get_session()
+        try:
+            progress = db.query(StudentProgress).filter_by(
+                student_id=student_id,
+                subject_id=st.session_state.selected_subject_id,  # ✅ REQUIRED
+                school_id=school_id,
+                test_type="subjective"
+            ).first()
+
+            if not progress:
+                progress = StudentProgress(
+                    student_id=student_id,
+                    subject_id=st.session_state.selected_subject_id,
+                    school_id=school_id,
+                    test_type="subjective",
+                    submitted=True,
+                    answers=[],
+                    current_q=0,
+                    start_time=time.time(),
+                    duration=0,
+                    questions=[]
+                )
+                db.add(progress)
+            else:
+                progress.submitted = True
+
+            db.commit()
+
+        finally:
+            db.close()
+
         st.session_state.submitted = True
         st.success("✅ Subjective test submitted successfully! Await teacher review.")
         st.balloons()
         st.stop()
-    else:
-        st.error("❌ Failed to submit subjective test.")
 
 
+from sqlalchemy import func
+from db_helpers import get_session
+from models import Question, Subject
 
-# ====================================================
-# 🟦 FIXED + CLEANED: Load Objective Questions
-# ====================================================
+# -------------------------------
+# Load Objective Questions
+# -------------------------------
 def get_objective_questions(class_name: str, subject: str | int, school_id=None):
-    from models import Question, Subject
     db = get_session()
-
     try:
-        # Normalize class
         normalized_class = class_name.strip().lower().replace(" ", "").replace("-", "")
 
-        # Determine subject_id
+        # Get subject_id
         if isinstance(subject, int):
             subject_obj = db.query(Subject).filter_by(id=subject, school_id=school_id).first()
         else:
@@ -446,12 +366,14 @@ def get_objective_questions(class_name: str, subject: str | int, school_id=None)
                 .filter(func.lower(Subject.name) == subject.lower(), Subject.school_id == school_id)
                 .first()
             )
+
         if not subject_obj:
+            print("❌ Subject not found!")
             return []
 
         subject_id = subject_obj.id
 
-        # Fetch objective questions (options not empty)
+        # Fetch objective questions (must have options)
         questions = (
             db.query(Question)
             .filter(
@@ -466,26 +388,143 @@ def get_objective_questions(class_name: str, subject: str | int, school_id=None)
 
         # Only keep questions that actually have options >= 2
         objective = [q for q in questions if q.options and len(q.options) >= 2]
-
         return objective
+    finally:
+        db.close()
 
-    except Exception as e:
-        print("❌ ERROR in get_objective_questions:", e)
-        return []
 
-# ====================================================
-# 🟩 DEBUG: Load Subjective Questions (FULL LOGGING)
-# ====================================================
-from sqlalchemy import func
+
+def render_subjective_test(questions, subject):
+    """Render one-question-per-page subjective test with compact buttons."""
+    st.markdown(
+        f"<h3 style='text-align:center; color:#2c3e50;'>✍️ {subject} — Subjective Test</h3>",
+        unsafe_allow_html=True
+    )
+
+    # === Initialize session ===
+    st.session_state.setdefault("page", 1)
+    total_questions = len(questions)
+    st.session_state.setdefault("subj_answers", [""] * total_questions)
+    st.session_state.setdefault("subj_files", [None] * total_questions)
+
+    # === Ensure equal array lengths ===
+    st.session_state.subj_answers = st.session_state.subj_answers[:total_questions] + [""] * max(0, total_questions - len(st.session_state.subj_answers))
+    st.session_state.subj_files = st.session_state.subj_files[:total_questions] + [None] * max(0, total_questions - len(st.session_state.subj_files))
+
+    # === Pagination ===
+    page = max(1, min(st.session_state.page, total_questions))
+    st.session_state.page = page
+    q_index = page - 1
+    q = questions[q_index]
+
+    # Load subjective question text safely (supports different key names)
+    question_text = (
+            q.get("question")
+            or q.get("question_text")
+            or q.get("text")
+            or q.get("title")
+            or "No question text"
+    )
+
+    # === Question Box ===
+    st.markdown(f"""
+        <div style="background-color:#f9f9ff; padding:0.8rem; border-radius:10px; border:1px solid #e5e5e5; margin-bottom:12px;">
+          <b style="color:#34495e;">Q{q_index + 1}.</b> {question_text}
+            <span style="color:#7f8c8d;">({q.get('marks', 10)} marks)</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # === Answer field ===
+    st.session_state.subj_answers[q_index] = st.text_area(
+        "✏️ Your Answer:",
+        value=st.session_state.subj_answers[q_index],
+        height=120,
+        key=f"subj_text_{q_index}"
+    ).strip()
+
+    # === Optional file upload ===
+    st.session_state.subj_files[q_index] = st.file_uploader(
+        "📎 Upload (optional)",
+        type=["jpg", "jpeg", "png", "pdf", "docx"],
+        key=f"subj_file_{q_index}"
+    )
+
+    # === Navigation buttons (compact centered layout) ===
+    st.markdown("<br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col1:
+        if page > 1:
+            if st.button("⬅ Prev", key=f"prev_{q_index}"):
+                st.session_state.page -= 1
+                st.rerun()
+
+    with col2:
+        st.markdown(
+            f"<div style='text-align:center; color:#6c757d; font-size:0.85rem;'>Question {q_index + 1} of {total_questions}</div>",
+            unsafe_allow_html=True
+        )
+
+    with col3:
+        if page < total_questions:
+            if st.button("Next ➡", key=f"next_{q_index}"):
+                st.session_state.page += 1
+                st.rerun()
+        else:
+            if st.button("🎯 Submit Test", key="submit_final"):
+                handle_subjective_submission(questions, subject)
+
+    # =========================================
+    # Sleek Fully-Rounded (Pill) Button Styling
+    # =========================================
+
+    # =========================================
+    # Pagination Buttons (Centered + Slim)
+    # =========================================
+    # === Navigation Buttons ===
+    col1, col2, col3 = st.columns([1, 1, 1])
+
+    # PREV BUTTON
+    with col1:
+        if st.session_state.page > 0:
+            st.button(
+                "⬅ Prev",
+                key=f"subj_prev_{page}",
+                on_click=lambda: setattr(st.session_state, "page", st.session_state.page - 1)
+            )
+
+    # QUESTION COUNTER
+    with col2:
+        st.markdown(
+            f"<div style='text-align:center;font-weight:600;'>Question {q_index + 1} of {total_questions}</div>",
+            unsafe_allow_html=True
+        )
+
+    # NEXT / SUBMIT BUTTON
+    with col3:
+        if page < total_questions - 1:
+            st.button(
+                "Next ➡",
+                key=f"subj_next_{page}",
+                on_click=lambda: setattr(st.session_state, "page", st.session_state.page + 1)
+            )
+        else:
+            st.markdown('<div class="submit-btn" style="text-align:center;">', unsafe_allow_html=True)
+            st.button(
+                "✅ Submit Test",
+                key="subj_submit_final",
+                on_click=lambda: handle_subjective_submission(questions, subject)
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+
+
+
+
 def get_subjective_questions(class_name: str, subject: str | int, school_id=None):
-    from models import Question, Subject
     db = get_session()
-
     try:
-        # Normalize class
         normalized_class = class_name.strip().lower().replace(" ", "").replace("-", "")
 
-        # Determine subject_id
         if isinstance(subject, int):
             subject_obj = db.query(Subject).filter_by(id=subject, school_id=school_id).first()
         else:
@@ -494,30 +533,28 @@ def get_subjective_questions(class_name: str, subject: str | int, school_id=None
                 .filter(func.lower(Subject.name) == subject.lower(), Subject.school_id == school_id)
                 .first()
             )
+
         if not subject_obj:
+            print("❌ Subject not found!")
             return []
 
         subject_id = subject_obj.id
 
-        # Fetch subjective questions (options empty)
+        # 🔥 Correct: Query the real subjective_questions table
         questions = (
-            db.query(Question)
+            db.query(SubjectiveQuestion)
             .filter(
-                func.replace(func.lower(Question.class_name), " ", "") == normalized_class,
-                Question.subject_id == subject_id,
-                Question.school_id == school_id,
-                Question.archived == False,
+                func.replace(func.lower(SubjectiveQuestion.class_name), " ", "") == normalized_class,
+                SubjectiveQuestion.subject_id == subject_id,
+                SubjectiveQuestion.school_id == school_id,
             )
             .all()
         )
 
-        subjective = [q for q in questions if not q.options or len(q.options) == 0]
+        return questions
+    finally:
+        db.close()
 
-        return subjective
-
-    except Exception as e:
-        print("❌ ERROR in get_subjective_questions:", e)
-        return []
 
 # -------------------------------
 # Load All Questions for a Test

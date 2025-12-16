@@ -12,7 +12,7 @@ from db_helpers import (
     get_users,load_subjects,
     get_test_duration,load_student_results,
     get_student_by_access_code_db,
-    decrement_retake,load_progress, save_progress, clear_progress,has_submitted_test
+    load_progress, save_progress, clear_progress,decrement_retake
 )
 def get_student_display(student) -> str:
     """Return a formatted display string for both dict and ORM student."""
@@ -246,7 +246,7 @@ def run_student_mode():
     st.session_state.subject = selected_subject
 
     # Get integer subject ID
-    selected_subject_id = subject_map.get(selected_subject)
+    selected_subject_id = subject_map.get(selected_subject) 
     if selected_subject_id is None:
         st.error(f"❌ Subject ID not found for '{selected_subject}'")
         st.stop()
@@ -284,7 +284,8 @@ def run_student_mode():
         color:#f3f6f6; border-bottom:4px solid #4CAF50; padding-bottom:2px; margin-bottom:10px;'>
         🧩 Choose Test Type
         </div>
-        """, unsafe_allow_html=True
+        """,
+        unsafe_allow_html=True
     )
 
     test_choice = st.radio(
@@ -295,8 +296,9 @@ def run_student_mode():
         key=f"test_type_radio_{class_name}_{selected_subject}"
     )
 
-    st.session_state.test_type = "objective" if "objective" in test_choice.lower() else "subjective"
-    st.session_state.test_phase = st.session_state.test_type
+    st.session_state.test_type = (
+        "objective" if "objective" in test_choice.lower() else "subjective"
+    )
 
     # -------------------------
     # 4️⃣ Load / Create Student Progress  (FIXED)
@@ -310,67 +312,69 @@ def run_student_mode():
 
     student_id = student_info["id"]
 
-    # Load saved progress using subject_id
     saved_progress = load_progress(
         access_code,
-        selected_subject_id,  # ✅ FIXED
+        selected_subject_id,
         school_id=school_id_int,
         test_type=st.session_state.test_type
     ) if access_code else None
 
     db = get_session()
     try:
-        record_query = db.query(StudentProgress).filter_by(
+        record = db.query(StudentProgress).filter_by(
             student_id=student_id,
             access_code=access_code,
-            subject_id=selected_subject_id,  # ✅ correct
+            subject_id=selected_subject_id,
             test_type=st.session_state.test_type,
             school_id=school_id_int,
-        )
-
-        record = record_query.first()
+        ).first()
 
         if not record:
             record = StudentProgress(
                 student_id=student_id,
                 access_code=access_code,
-                subject_id=selected_subject_id,  # ✅ FIXED
+                subject_id=selected_subject_id,
+                test_type=st.session_state.test_type,
                 answers=[],
                 current_q=0,
                 start_time=datetime.now().timestamp(),
                 duration=30 * 60,
                 questions=[],
                 school_id=school_id_int,
-                test_type=st.session_state.test_type,
                 submitted=False
             )
             db.add(record)
             db.commit()
-
     finally:
         db.close()
-
     # -------------------------
     # 5️⃣ Determine test type (unchanged)
     # -------------------------
-    selected_test_mode = st.session_state.get("selected_test_mode") or "Objective"
-    test_type = "objective" if selected_test_mode.lower().startswith("obj") else "subjective"
+
+    # 🔒 PERSIST test type across reruns
+    test_type = st.session_state.test_type
 
     # -------------------------
     # 5️⃣ Start / Resume Logic (FIXED)
     # -------------------------
     col1, col2 = st.columns(2)
 
-    start_clicked = col1.button("🚀 Start Test", key=f"start_btn_{selected_subject_id}")
+    start_clicked = col1.button(
+        "🚀 Start Test",
+        key=f"start_btn_{selected_subject_id}_{st.session_state.test_type}"
+    )
     resume_clicked = False
 
     db = get_session()
     try:
-        record = record_query.first()
+        record = db.query(StudentProgress).filter_by(
+            student_id=student_id,
+            subject_id=selected_subject_id,
+            test_type=st.session_state.test_type,
+            school_id=school_id_int,
+        ).first()
 
-        # READ submitted before closing
         already_done = bool(record and record.submitted)
-
     finally:
         db.close()
 
@@ -378,15 +382,14 @@ def run_student_mode():
     retake_allowed = can_take_test(
         access_code,
         selected_subject_id,
-        school_id_int
+        school_id_int,
+        st.session_state.test_type
     )
 
-    # BLOCK
     if already_done and not retake_allowed:
         st.error("❌ You have already completed this test. Retake not allowed.")
         st.stop()
 
-    # RETAKE ALLOWED
     if already_done and retake_allowed:
         st.success("🔁 Retake allowed by Admin. You may start again.")
 
@@ -394,24 +397,37 @@ def run_student_mode():
     # Resume logic ONLY if not submitted before
     # ----------------------------------------------------
     if saved_progress and not saved_progress.get("submitted", False):
-        resume_clicked = col2.button("🔄 Resume Test", key=f"resume_btn_{selected_subject_id}")
-    else:
-        resume_clicked = False
+        resume_clicked = col2.button(
+            "🔄 Resume Test",
+            key=f"resume_btn_{selected_subject_id}_{st.session_state.test_type}"
+        )
+
     # -------------------------
     # 6️⃣ Fresh Start / Resume
     # -------------------------
     if start_clicked or resume_clicked or st.session_state.get("test_started"):
         st.session_state.test_started = True
-        duration_minutes = get_test_duration(class_name=class_name, subject=selected_subject,
-                                             school_id=school_id_int) or 30
+
+        duration_minutes = get_test_duration(
+            class_name=class_name,
+            subject=selected_subject,
+            school_id=school_id_int
+        ) or 30
 
         if start_clicked or "questions" not in st.session_state:
-            st.session_state.questions = objective_questions if st.session_state.test_type == "objective" else subjective_questions
+            st.session_state.questions = (
+                objective_questions
+                if st.session_state.test_type == "objective"
+                else subjective_questions
+            )
             st.session_state.answers = [""] * len(st.session_state.questions)
             st.session_state.current_q = 0
             st.session_state.start_time = datetime.now()
             st.session_state.duration = duration_minutes * 60
-            st.session_state.test_end_time = st.session_state.start_time + timedelta(seconds=st.session_state.duration)
+            st.session_state.test_end_time = (
+                    st.session_state.start_time
+                    + timedelta(seconds=st.session_state.duration)
+            )
             st.session_state.marked_for_review = set()
 
         # --------------------------------------------
@@ -501,23 +517,22 @@ def run_student_mode():
 
         current_q_idx = min(max(current_q_idx, 0), len(questions) - 1)
         st.session_state.current_q = current_q_idx
-        show_question_tracker(st.session_state.questions, st.session_state.current_q, st.session_state.answers)
+
+        # ✅ SAFE NOW
+        show_question_tracker(
+            st.session_state.questions,
+            st.session_state.current_q,
+            st.session_state.answers
+        )
 
         q = questions[current_q_idx]
         question_text = field(q, "question_text") or field(q, "question") or "No question text"
         st.markdown(f"**Q{current_q_idx + 1}: {question_text}**")
 
         # -------------------------
-        # Options (clean + placeholder)
+        # Answer input (OBJECTIVE vs SUBJECTIVE)
         # -------------------------
-        raw_options = field(q, "options", [])
-        options = parse_options(raw_options)
-
-        # Clean: remove quotes
-        clean_options = [str(opt).strip().strip('"').strip("'") for opt in options]
-
-        # Add placeholder
-        choices = ["Choose answer"] + clean_options
+        question_type = field(q, "question_type", st.session_state.test_type)
 
         # Ensure answers list is sized
         while len(st.session_state.answers) <= current_q_idx:
@@ -525,24 +540,37 @@ def run_student_mode():
 
         prev_answer = st.session_state.answers[current_q_idx]
 
-        # Determine which index should be selected
-        selected_index = choices.index(prev_answer) if prev_answer in choices else 0
+        # 🟦 OBJECTIVE QUESTION
+        if question_type == "objective":
 
-        # -------------------------
-        # Radio button
-        # -------------------------
-        selected_option = st.radio(
-            "Choose an option:",
-            choices,
-            index=selected_index,
-            key=f"q_{current_q_idx}"
-        )
+            raw_options = field(q, "options", [])
+            options = parse_options(raw_options)
 
-        # Save answer (ignore placeholder)
-        if selected_option == "Choose answer":
-            st.session_state.answers[current_q_idx] = ""
+            clean_options = [str(opt).strip().strip('"').strip("'") for opt in options]
+            choices = ["Choose answer"] + clean_options
+
+            selected_index = choices.index(prev_answer) if prev_answer in choices else 0
+
+            selected_option = st.radio(
+                "Choose an option:",
+                choices,
+                index=selected_index,
+                key=f"q_{current_q_idx}"
+            )
+
+            st.session_state.answers[current_q_idx] = (
+                "" if selected_option == "Choose answer" else selected_option
+            )
+
+        # 🟩 SUBJECTIVE QUESTION
         else:
-            st.session_state.answers[current_q_idx] = selected_option
+            answer = st.text_area(
+                "Type your answer:",
+                value=prev_answer,
+                key=f"text_{current_q_idx}",
+                height=150
+            )
+            st.session_state.answers[current_q_idx] = answer
 
         # -------------------------
         # Navigation buttons
@@ -598,22 +626,23 @@ def run_student_mode():
                 )
 
                 # ------------------------------------
-                # 2️⃣ CONSUME RETAKE (CRITICAL FIX)
+                # 2️⃣ CONSUME RETAKE (CORRECT)
                 # ------------------------------------
                 from models import Student
+
                 db = get_session()
                 try:
-                    student_row = db.query(Student).filter_by(
+                    student = db.query(Student).filter_by(
                         access_code=access_code,
                         school_id=school_id_int
                     ).first()
 
-                    # 🔒 If student had retake permission → consume it
-                    if student_row:
-                        # ⛔ Always block after a submission
-                        student_row.can_retake = False
-                        db.commit()
-
+                    if student:
+                        decrement_retake(
+                            student_id=student.id,
+                            subject_id=subject_id,
+                            school_id=school_id_int
+                        )
 
                 finally:
                     db.close()

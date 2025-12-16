@@ -1,13 +1,13 @@
-# SmartTests ??
+# SmartTests 
 
 SmartTests is a **Streamlit-based school test application** designed for students and administrators.  
 It provides a clean and interactive way to manage online assessments.
 
 ---
 
-## ? Features
+##  Features
 
-### ????? Student Mode
+### Student Mode
 - Login with unique access code
 - Take timed tests with multiple subjects
 - Mark questions for review
@@ -15,7 +15,7 @@ It provides a clean and interactive way to manage online assessments.
 - Download results as PDF
 - Prevents multiple retakes
 
-### ????? Admin Mode
+###  Admin Mode
 - Multi-admin login system
 - Add / Remove admins
 - Manage student access codes
@@ -25,7 +25,7 @@ It provides a clean and interactive way to manage online assessments.
 
 ---
 
-## ?? How to Run
+## How to Run
 
 1. Clone the repo:
    ```bash

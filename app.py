@@ -3,8 +3,6 @@ from database import engine, test_db_connection
 from ui import set_background
 from selections.student import run_student_mode
 from selections.admin import run_admin_mode
-
-
 # ==============================
 # Step 5: Session state defaults
 # ==============================

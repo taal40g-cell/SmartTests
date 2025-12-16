@@ -106,32 +106,22 @@ def warm_db(retries: int = 6, initial_delay: float = 0.5):
 threading.Thread(target=warm_db, daemon=True).start()
 
 
-# =====================================
-# Sessions (get_session returns None if DB unavailable)
-# =====================================
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
+class NullSession:
+    """Safe fallback session that prevents breaking the app."""
+    def __getattr__(self, item):
+        # Any DB operation simply does nothing
+        def no_op(*args, **kwargs):
+            return None
+        return no_op
 
 def get_session():
-    """
-    Returns a SQLAlchemy Session or None if DB is not ready.
-    Callers must handle None (returning safe fallback).
-    """
-    # If using SQLite we always return a session immediately
-    if DB_IS_SQLITE:
-        return SessionLocal()
-
-    # If background warm-up hasn't marked DB ready, return None quickly
-    if not DB_READY:
-        return None
-
-    # DB_READY True => create regular session but guard against runtime errors
     try:
         return SessionLocal()
-    except (OperationalError, DBAPIError) as e:
-        print("⚠️ get_session failed to create a session:", e)
-        return None
-
+    except Exception as e:
+        print("DB error:", e)
+        return NullSession()
 
 # =====================================
 # Init DB (manual)

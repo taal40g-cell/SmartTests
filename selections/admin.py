@@ -1024,41 +1024,45 @@ def run_admin_mode():
                 finally:
                     db.close()
 
-        # --- Bulk Upload ---
-        st.markdown("### 📤 Bulk Upload Questions (JSON)")
-        uploaded_file = st.file_uploader("Upload JSON file", type=["json"], key="subj_upload_file")
-        if uploaded_file and st.button("✅ Upload Now", key="subj_upload_btn"):
+        # --- Bulk Upload (CSV) ---
+        st.markdown("### 📤 Bulk Upload Questions (CSV)")
+        csv_file = st.file_uploader("Upload CSV file", type=["csv"], key="subj_csv_upload")
+
+        if csv_file and st.button("📥 Upload CSV Now"):
             try:
-                data = json.load(uploaded_file)
-                if not isinstance(data, list):
-                    st.error("⚠️ JSON must be a list of question objects.")
+                df = pd.read_csv(csv_file)
+
+                required_cols = ["question_text", "marks"]
+                if not all(col in df.columns for col in required_cols):
+                    st.error(f"⚠️ CSV must contain columns: {required_cols}")
                     st.stop()
 
-                cleaned = []
-                for idx, q in enumerate(data, start=1):
-                    if not all(k in q for k in ["question", "marks"]):
-                        st.error(f"⚠️ Question {idx} missing required fields.")
-                        st.stop()
-                    cleaned.append({
-                        "question_text": q["question"].strip(),
-                        "marks": int(q["marks"])
-                    })
-
                 db = get_session()
-                for item in cleaned:
+                count = 0
+
+                for _, row in df.iterrows():
+                    q_text = str(row["question_text"]).strip()
+                    marks_value = int(row["marks"])
+
+                    if not q_text:
+                        continue
+
                     new_q = SubjectiveQuestion(
                         school_id=school_id,
                         class_name=class_name,
                         subject=subject,
-                        question_text=item["question_text"],
-                        marks=item["marks"]
+                        question_text=q_text,
+                        marks=marks_value
                     )
                     db.add(new_q)
+                    count += 1
+
                 db.commit()
-                st.success(f"🎯 Uploaded {len(cleaned)} subjective questions for {class_name} - {subject}")
+                st.success(f"✅ Uploaded {count} subjective questions from CSV!")
                 st.rerun()
+
             except Exception as e:
-                st.error(f"❌ Upload failed: {e}")
+                st.error(f"❌ CSV Upload Failed: {e}")
             finally:
                 db.close()
 
