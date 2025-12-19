@@ -391,7 +391,7 @@ def run_student_mode():
         st.stop()
 
     if already_done and retake_allowed:
-        st.success("🔁 Retake allowed by Admin. You may start again.")
+        st.success("🔁 You may start again.")
 
     # ----------------------------------------------------
     # Resume logic ONLY if not submitted before
