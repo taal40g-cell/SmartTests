@@ -311,7 +311,6 @@ def run_student_mode():
         st.stop()
 
     student_id = student_info["id"]
-
     saved_progress = load_progress(
         access_code,
         selected_subject_id,
@@ -391,7 +390,7 @@ def run_student_mode():
         st.stop()
 
     if already_done and retake_allowed:
-        st.success("🔁 You may start again.")
+        st.success("🔁 You may take test.")
 
     # ----------------------------------------------------
     # Resume logic ONLY if not submitted before
@@ -504,12 +503,87 @@ def run_student_mode():
                 return obj.get(name, default)
             return getattr(obj, name, default)
 
-            # -------------------------
-            # Render current question
-            # -------------------------
+        # =============================
+        # ⏱️ TIMER (BEFORE RENDER)
+        # =============================
+        now = datetime.now()
 
+        remaining_seconds = int(
+            (st.session_state.test_end_time - now).total_seconds()
+        )
+
+        if remaining_seconds < 0:
+            remaining_seconds = 0
+
+        # 🔒 ADD THIS LINE HERE ⬇️
+        time_up = remaining_seconds <= 0
+
+        mins, secs = divmod(remaining_seconds, 60)
+
+        st.markdown(
+            f"""
+            <div style="
+                padding:10px;
+                border-radius:8px;
+                background:#f9f9f9;
+                border:2px solid {'red' if remaining_seconds <= 60 else 'green'};
+                text-align:center;
+                font-size:20px;
+                font-weight:bold;
+                margin-bottom:10px;
+            ">
+                ⏱️ Time Remaining: {mins:02d}:{secs:02d}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        # -------------------------
+        # ⛔ Auto-submit when time is up
+        # -------------------------
+        if remaining_seconds <= 0 and not st.session_state.get("submitted", False):
+            st.warning("⏰ Time is up! Submitting your test automatically...")
+
+            st.session_state.submitted = True
+
+            start_time_ts = (
+                st.session_state.start_time.timestamp()
+                if isinstance(st.session_state.start_time, datetime)
+                else st.session_state.start_time
+            )
+
+            subject_id = next(
+                (s["id"] for s in st.session_state.subjects if s["name"] == selected_subject),
+                None
+            )
+
+            if subject_id is None:
+                st.error("❌ Subject ID not found. Auto-submit failed.")
+                st.stop()
+
+            save_progress(
+                access_code=access_code,
+                subject_id=subject_id,
+                answers=st.session_state.answers,
+                current_q=st.session_state.current_q,
+                start_time=start_time_ts,
+                duration=st.session_state.duration,
+                questions=st.session_state.questions,
+                school_id=school_id_int,
+                test_type=st.session_state.test_type,
+                submitted=True
+            )
+
+            st.success("✅ Test submitted automatically.")
+            st.stop()
+
+        # -------------------------
+        # Render current question
+        # -------------------------
         questions = st.session_state.questions
         current_q_idx = st.session_state.current_q
+
+
 
         if not questions:
             st.warning("⚠️ No questions available for this test.")
@@ -555,7 +629,8 @@ def run_student_mode():
                 "Choose an option:",
                 choices,
                 index=selected_index,
-                key=f"q_{current_q_idx}"
+                key=f"q_{current_q_idx}",
+                disabled=time_up
             )
 
             st.session_state.answers[current_q_idx] = (
@@ -568,8 +643,10 @@ def run_student_mode():
                 "Type your answer:",
                 value=prev_answer,
                 key=f"text_{current_q_idx}",
-                height=150
+                height=150,
+                disabled=time_up
             )
+
             st.session_state.answers[current_q_idx] = answer
 
         # -------------------------
@@ -608,6 +685,7 @@ def run_student_mode():
                 if subject_id is None:
                     st.error(f"Could not find subject ID for '{selected_subject}'")
                     st.stop()
+
 
                 # ------------------------------------
                 # 1️⃣ Save final progress
@@ -667,3 +745,4 @@ def run_student_mode():
                 st.session_state.answers = []
 
                 st.stop()
+                
