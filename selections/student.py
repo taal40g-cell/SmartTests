@@ -402,11 +402,55 @@ def run_student_mode():
         )
 
     # -------------------------
+    # Init anti-cheat state (ONCE)
+    # -------------------------
+    if "paste_count" not in st.session_state:
+        st.session_state.paste_count = 0
+
+    if "submitted" not in st.session_state:
+        st.session_state.submitted = False
+
+    if "tab_switch_count" not in st.session_state:
+        st.session_state.tab_switch_count = 0
+
+    # -------------------------
     # 6️⃣ Fresh Start / Resume
     # -------------------------
     if start_clicked or resume_clicked or st.session_state.get("test_started"):
         st.session_state.test_started = True
 
+        # =============================
+        # 🔁 TAB SWITCH DETECTION (HERE)
+        # =============================
+        import streamlit.components.v1 as components
+
+        import streamlit.components.v1 as components
+
+        tab_event = components.html(
+            """
+            <script>
+            document.addEventListener("visibilitychange", function () {
+                if (document.hidden) {
+                    Streamlit.setComponentValue("TAB_HIDDEN");
+                }
+            });
+            </script>
+            """,
+            height=0
+        )
+
+        if tab_event == "TAB_HIDDEN":
+            st.session_state.tab_switch_count += 1
+            st.warning(
+                f"⚠️ Tab switch detected ({st.session_state.tab_switch_count}/3)"
+            )
+
+            if st.session_state.tab_switch_count >= 3:
+                st.error("🚫 Excessive tab switching detected. Test submitted automatically.")
+                st.session_state.submitted = True
+                st.stop()
+
+        # ⬇️ everything else continues normally
         duration_minutes = get_test_duration(
             class_name=class_name,
             subject=selected_subject,
@@ -424,11 +468,12 @@ def run_student_mode():
             st.session_state.start_time = datetime.now()
             st.session_state.duration = duration_minutes * 60
             st.session_state.test_end_time = (
-                    st.session_state.start_time
-                    + timedelta(seconds=st.session_state.duration)
+                    st.session_state.start_time + timedelta(seconds=st.session_state.duration)
             )
             st.session_state.marked_for_review = set()
 
+            # 🔒 reset anti-cheat ONLY for new test
+            st.session_state.paste_count = 0
         # --------------------------------------------
         # 🟩 Resume Test (Continue from save)
         # --------------------------------------------
@@ -636,9 +681,17 @@ def run_student_mode():
             st.session_state.answers[current_q_idx] = (
                 "" if selected_option == "Choose answer" else selected_option
             )
-
         # 🟩 SUBJECTIVE QUESTION
         else:
+            prev_len_key = f"prev_len_{current_q_idx}"
+            lock_key = f"paste_lock_{current_q_idx}"
+
+            if prev_len_key not in st.session_state:
+                st.session_state[prev_len_key] = len(prev_answer or "")
+
+            if lock_key not in st.session_state:
+                st.session_state[lock_key] = False
+
             answer = st.text_area(
                 "Type your answer:",
                 value=prev_answer,
@@ -647,6 +700,26 @@ def run_student_mode():
                 disabled=time_up
             )
 
+            new_len = len(answer or "")
+            old_len = st.session_state[prev_len_key]
+
+            # 🔍 COPY / PASTE DETECTION
+            if new_len - old_len >= 25 and not st.session_state[lock_key]:
+                st.session_state[lock_key] = True
+                st.session_state.paste_count += 1
+
+                st.warning(f"⚠️ Copy/Paste detected ({st.session_state.paste_count}/3)")
+
+                if st.session_state.paste_count >= 3:
+                    st.error("🚫 Excessive copy/paste detected. Test submitted automatically.")
+                    st.session_state.submitted = True
+                    st.stop()
+
+            # 🔓 unlock ONLY when user types normally
+            if new_len <= old_len + 2:
+                st.session_state[lock_key] = False
+
+            st.session_state[prev_len_key] = new_len
             st.session_state.answers[current_q_idx] = answer
 
         # -------------------------
