@@ -3032,12 +3032,33 @@ ROLE_PERMISSIONS = {
 
 def has_permission(role, action):
     perms = ROLE_PERMISSIONS.get(role, [])
-    return "all" in perms or action in perms
+
+    if "all" in perms:
+        return True
+
+    return action in perms
+
+
 
 
 def require_permission(action):
     role = st.session_state.get("admin_role") or st.session_state.get("role")
 
+    if not role:
+        st.error("🚫 Not authenticated.")
+        st.stop()
+
     if not has_permission(role, action):
         st.error("🚫 You are not allowed to access this feature.")
         st.stop()
+
+
+
+def require_school_scope(query, school_id, role):
+    """
+    Ensures non-super-admin users cannot access other schools' data.
+    """
+    if role == "super_admin":
+        return query
+
+    return query.filter_by(school_id=school_id)
