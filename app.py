@@ -1,10 +1,26 @@
 import streamlit as st
-from database import engine, test_db_connection
-from ui import set_background
+# ✅ DB bootstrap (NO circular imports)
+from backend.database import engine, init_db, ensure_default_sqlite_data,seed_default_classes
+from sqlalchemy import text
+from backend.ui import set_background
 from selections.student import run_student_mode
 from selections.admin import run_admin_mode
+from backend import database
+print("🔥 ACTIVE DB:", database.engine.url)
+from backend.db_helpers import ensure_super_admin_exists
+ensure_super_admin_exists()
 # ==============================
-# Step 5: Session state defaults
+# App startup (RUN ONCE per session)
+# ==============================
+if "db_initialized" not in st.session_state:
+    database.init_db()
+    database.ensure_default_sqlite_data()
+    database.seed_default_classes()
+    st.session_state.db_initialized = True
+
+
+# ==============================
+# Session state defaults
 # ==============================
 st.session_state.setdefault("logged_in", False)
 st.session_state.setdefault("access_code", "")
@@ -12,7 +28,9 @@ st.session_state.setdefault("menu_selection", "Student Mode")
 st.session_state.setdefault("trigger_refresh", False)
 st.session_state.setdefault("admin_username", "")
 st.session_state.setdefault("admin_logged_in", False)
-
+if "schools" not in st.session_state:
+    st.session_state.schools = []
+# ... rest of your app.py
 
 # --- Results page ---
 def results_page():
@@ -29,6 +47,55 @@ def results_page():
 # --- Main app ---
 def main():
     set_background("assets/sic.png")
+
+    st.markdown("""
+    <style>
+
+    /* 1️⃣ Base Font System */
+    html {
+        font-size: 16px;  /* Baseline */
+    }
+
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* 2️⃣ Headings */
+    h1 { font-size: 2rem; font-weight: 700; }
+    h2 { font-size: 1.6rem; font-weight: 600; }
+    h3 { font-size: 1.3rem; font-weight: 600; }
+
+    /* 3️⃣ Question Text */
+    .question-text {
+        font-size: 1.2rem;
+        line-height: 1.6;
+        font-weight: 500;
+    }
+
+    div[role="radiogroup"] label {
+    font-size: 1.05rem !important;
+    }
+
+    /* 4️⃣ Options */
+    .option-text {
+        font-size: 1.05rem;
+        line-height: 1.5;
+    }
+
+    /* 5️⃣ Small Labels (timer, meta info) */
+    .meta-text {
+        font-size: 0.9rem;
+        opacity: 0.8;
+    }
+    
+    
+    textarea {
+    font-size: 1.05rem !important;
+   }
+
+    </style>
+    """, unsafe_allow_html=True)
+
 
     # Handle results page query param
     page = st.query_params.get("page", [None])[0]
@@ -114,12 +181,16 @@ def main():
     # 🧩 Sidebar Test Connection
     # ============================
     st.sidebar.markdown("---")
-    if st.sidebar.button("🧩 Test Database Connection"):
-        if test_db_connection():
-            st.sidebar.success("✅ Database connected successfully!")
-        else:
-            st.sidebar.error("❌ Failed to connect to database.")
 
+    if st.sidebar.button("🧩 Test Database Connection"):
+        try:
+            # ✅ Use engine.connect(), not engine()
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))  # simple test query
+            st.sidebar.success("✅ Database connected successfully!")
+
+        except Exception as e:
+            st.sidebar.error(f"❌ Failed to connect to database:\n{e}")
     # ============================
     # 📍 Load Selected Section
     # ============================

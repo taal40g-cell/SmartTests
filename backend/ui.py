@@ -12,9 +12,8 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from datetime import datetime
-from helpers import get_subjective_questions, submit_subjective_answer
-from models import Subject,SubjectiveSubmission
-from database import get_session
+from backend.models import Subject
+from backend.database import get_session
 
 
 # -----------------------------
@@ -27,6 +26,10 @@ def get_base64_image(file_path: str) -> str:
         raise FileNotFoundError(f"Background file not found: {file_path}")
     with open(file_path, "rb") as f:
         return base64.b64encode(f.read()).decode()
+
+
+
+
 
 def set_background(file_path: str = None, color: str = "#7abaa1", force_reload: bool = False):
     """
@@ -199,47 +202,92 @@ def render_test(questions, subject):
 
 
 
-def generate_pdf(name, class_name, subject, correct, total, percent, details,
-                 school_name=None, school_id=None, logo_path=None):
+
+
+
+def generate_pdf(
+    name,
+    class_name,
+    subject,
+    correct,
+    total,
+    percent,
+    details,
+    school_name=None,
+    school_id=None,
+    logo_path=None
+):
     """
-    Generate a neat test result PDF with school info, logo, and result breakdown in a table.
+    Generate a clean, structured test result PDF.
     """
+
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
 
-    # --- Top Header Section ---
+    # =========================
+    # 🧠 HEADER SECTION
+    # =========================
     y_top = height - 60
+    center_x = width / 2
 
-    # School logo
+    # -------------------------
+    # Logo (left side)
+    # -------------------------
+    logo_x = 60
+    logo_y = y_top - 50
+
     if logo_path:
         try:
             logo = ImageReader(logo_path)
-            c.drawImage(logo, 60, y_top - 40, width=80, height=60, preserveAspectRatio=True, mask='auto')
+            c.drawImage(
+                logo,
+                logo_x,
+                logo_y,
+                width=60,
+                height=50,
+                preserveAspectRatio=True,
+                mask='auto'
+            )
         except Exception:
             c.setFont("Helvetica-Oblique", 9)
-            c.drawString(60, y_top - 20, "[Logo not found]")
+            c.drawString(logo_x, y_top - 20, "[Logo not found]")
     else:
         c.setFont("Helvetica-Oblique", 9)
-        c.drawString(60, y_top - 20, "[LOGO PLACEHOLDER]")
+        c.drawString(logo_x, y_top - 20, "[LOGO PLACEHOLDER]")
 
-    # School Name and Info
+    # -------------------------
+    # School Name
+    # -------------------------
+    display_school = school_name or "SMART TEST SCHOOL"
+
     c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(width / 2 + 40, y_top, school_name or "SMART TEST SCHOOL")
-    c.setFont("Helvetica", 10)
-    if school_id:
-        c.drawCentredString(width / 2 + 40, y_top - 15, f"School ID: {school_id}")
+    c.drawCentredString(center_x, y_top, display_school)
 
+    # -------------------------
     # Title
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(width / 2 + 40, y_top - 40, "STUDENT TEST RESULT")
+    # -------------------------
+    c.setFont("Helvetica-Bold", 13)
+    c.drawCentredString(center_x, y_top - 18, "STUDENT TEST RESULT")
 
-    # Date/Time
+    # -------------------------
+    # Meta Line (School ID + Date)
+    # -------------------------
     c.setFont("Helvetica", 9)
-    c.drawRightString(width - 60, y_top - 20, datetime.now().strftime("Generated: %Y-%m-%d %H:%M:%S"))
+    meta_text = f"School ID: {school_id or 'N/A'}    Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    c.drawCentredString(center_x, y_top - 35, meta_text)
 
-    # --- Student Info ---
+    # -------------------------
+    # Divider
+    # -------------------------
+    c.setStrokeColorRGB(0.2, 0.6, 0.2)
+    c.line(60, y_top - 45, width - 60, y_top - 45)
+
+    # =========================
+    # 👤 STUDENT INFO SECTION
+    # =========================
     y = y_top - 80
+
     c.setFont("Helvetica", 11)
     c.drawString(70, y, f"Student Name: {name}")
     y -= 18
@@ -249,86 +297,75 @@ def generate_pdf(name, class_name, subject, correct, total, percent, details,
     y -= 18
     c.drawString(70, y, f"Score: {correct}/{total} ({percent:.2f}%)")
 
-    # Divider Line
+    # Divider
     y -= 15
     c.setStrokeColorRGB(0.2, 0.6, 0.2)
     c.line(60, y, width - 60, y)
     y -= 25
 
-    # --- Detailed Results in Table ---
+    # =========================
+    # 📊 QUESTION BREAKDOWN
+    # =========================
     c.setFont("Helvetica-Bold", 12)
     c.drawString(70, y, "Question Breakdown:")
     y -= 15
 
-    # Table headers and rows
     data = [["#", "Question", "Your Answer", "Correct Answer", "Result"]]
 
     for i, d in enumerate(details, start=1):
-        question = d.get("question", "").strip()
-        your_answer = d.get("your_answer", "—")
+        question = (d.get("question_text") or "").strip()
+        your_answer = d.get("selected", "—")
         correct_answer = d.get("correct_answer", "—")
         is_correct = d.get("is_correct", False)
-        short_q = (question[:65] + "...") if len(question) > 65 else question
+
+        short_q = question[:65] + "..." if len(question) > 65 else question
         result = "✔ Correct" if is_correct else "✘ Wrong"
+
         data.append([str(i), short_q, your_answer, correct_answer, result])
 
-    # Table style
-    table = Table(data, colWidths=[30, 200, 100, 100, 70])
-    style = TableStyle([
+    table = Table(data, colWidths=[30, 220, 90, 90, 70])
+
+    table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
-        ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-    ])
-    table.setStyle(style)
 
-    # Build table page by page
-    available_height = y - 100
-    table_height = len(data) * 18
-    if table_height > available_height:
-        # too long, split across pages
-        c.showPage()
-        y = height - 80
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+    ]))
 
     table.wrapOn(c, width - 120, height)
     table.drawOn(c, 60, y - (len(data) * 18))
 
-    # --- Footer ---
+    # =========================
+    # 📄 FOOTER
+    # =========================
     c.setFont("Helvetica-Oblique", 9)
     c.setFillColorRGB(0.3, 0.3, 0.3)
     c.drawCentredString(width / 2, 30, "Generated by Smart Test App © 2025")
     c.setFillColorRGB(0, 0, 0)
 
+    # =========================
+    # FINALIZE
+    # =========================
     c.showPage()
     c.save()
+
     buffer.seek(0)
     return buffer.getvalue()
 
 
 
-# ==============================
-# Constants
-# ==============================
-CLASSES = ["JHS1", "JHS2", "JHS3", "SHS1", "SHS2", "SHS3"]
-
-
-# ==============================
-# 🧠 Subject Management Helpers
-# ==============================
-SUBJECTS_FILE = "subjects.json"
-DEFAULT_SUBJECTS = [
-    "English", "Mathematics", "Science", "History", "Geography",
-    "Physics", "Chemistry", "Biology", "ICT", "Economics"
-]
 
 # ==============================
 # 🧩 Other Small Helpers
 # ==============================
-
 def df_download_button(df: pd.DataFrame, label: str, filename: str):
     """Download CSV button helper"""
     if df is None or df.empty:
@@ -347,13 +384,30 @@ def excel_download_buffer(dfs: dict, filename="smarttest_backup.xlsx"):
     return buffer.getvalue()
 
 
-def load_classes():
-    """Load class list from file or return default list."""
-    file_path = "data/classes.json"
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return ["JHS 1", "JHS 2", "JHS 3"]
+
+from backend.models import Class
+def load_classes(school_id: int, db=None):
+    """
+    Return a list of Class ORM objects for a given school.
+    """
+    if not school_id:
+        return []
+
+    close_db = False
+    if db is None:
+        db = get_session()
+        close_db = True
+
+    try:
+        return (
+            db.query(Class)
+            .filter(Class.school_id == school_id)
+            .order_by(Class.name.asc())
+            .all()
+        )
+    finally:
+        if close_db:
+            db.close()
 
 
 def style_admin_headers():
@@ -368,49 +422,6 @@ def style_admin_headers():
         }
         </style>
     """, unsafe_allow_html=True)
-
-
-
-# ==============================================
-# 🎓 STUDENT: SUBJECTIVE TEST SECTION
-# ==============================================
-def run_subjective_test_ui():
-    st.subheader("📝 Subjective Test Section")
-
-    school_id = st.session_state.get("school_id")
-    student_id = st.session_state.get("student_id")
-    access_code = st.session_state.get("access_code")
-    student_name = st.session_state.get("student_name")
-
-    if not all([school_id, student_id]):
-        st.warning("⚠️ Please log in properly to continue.")
-        st.stop()
-
-    cls = st.selectbox("Select Class", CLASSES, key="subj_cls")
-    subject = st.selectbox("Select Subject", Subject, key="subj_sub")
-
-    if st.button("📂 Load Questions"):
-        questions = get_subjective_questions(school_id, cls, subject)
-
-        if not questions:
-            st.info("No subjective questions uploaded for this class and subject yet.")
-            return
-
-        st.markdown("### ✍️ Answer the questions below:")
-        answers = {}
-        for q in questions:
-            st.markdown(f"**Q{q.id}. {q.question_text}** ({q.marks} marks)")
-            answers[q.id] = st.text_area(f"Answer for Q{q.id}", height=150, key=f"ans_{q.id}")
-
-        if st.button("📤 Submit Answers"):
-            ok = submit_subjective_answer(
-                school_id, student_id, access_code, cls, subject, answers
-            )
-            if ok:
-                st.success("✅ Answers submitted successfully! Await teacher review.")
-            else:
-                st.error("❌ Could not save answers. Please try again.")
-
 
 
 
@@ -439,8 +450,8 @@ def get_test_type(subject_name: str):
 
 
 
-from database import get_session
-from models import StudentProgress
+from backend.database import get_session
+from backend.models import StudentProgress
 from sqlalchemy.orm import Session
 
 def get_saved_progress(access_code: str, subject: str, school_id: int, test_type: str = "objective") -> dict:

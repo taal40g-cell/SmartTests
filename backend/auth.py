@@ -1,16 +1,17 @@
-# patch_fill_options.py
-import random
-from sqlalchemy import cast
-from sqlalchemy.dialects.postgresql import JSONB
-from database import get_session
-from models import Question
 
-def patch_questions_with_options():
+import random
+from database import get_session
+from models import ObjectiveQuestion  # updated model
+
+
+
+
+def patch_objective_questions_with_options():
     db = get_session()
     try:
-        # Fetch only questions with empty options ([])
-        questions = db.query(Question).filter(
-            cast(Question.options, JSONB) == []
+        # Fetch only objective questions with empty options
+        questions = db.query(ObjectiveQuestion).filter(
+            (ObjectiveQuestion.options == None) | (ObjectiveQuestion.options == [])
         ).all()
 
         print(f"🔍 Found {len(questions)} questions with empty options")
@@ -20,11 +21,12 @@ def patch_questions_with_options():
             return
 
         for q in questions:
-            # You can customize distractors here per subject/class
+            # Customize distractors here
             distractors = ["Option A", "Option B", "Option C"]
 
-            # Make sure correct answer is included, randomize order
-            options = distractors + [q.correct_answer]
+            # Ensure correct answer is included
+            correct = q.correct_answer.strip() if q.correct_answer else "Answer"
+            options = distractors + [correct]
             random.shuffle(options)
 
             q.options = options
@@ -32,11 +34,14 @@ def patch_questions_with_options():
 
         db.commit()
         print(f"🎉 Successfully updated {len(questions)} questions")
+
     except Exception as e:
         db.rollback()
         print(f"❌ Error: {e}")
+
     finally:
         db.close()
 
+
 if __name__ == "__main__":
-    patch_questions_with_options()
+    patch_objective_questions_with_options()
