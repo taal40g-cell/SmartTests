@@ -1,16 +1,58 @@
-from backend.models import Base
-from backend.db_helpers import ensure_super_admin_exists
-from backend.database import engine
-from backend.database import seed_default_classes
-import sys
 import os
+import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-print("🔥 Initializing database...")
+# ==============================
+# PATH FIX (must come first)
+# ==============================
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+
+# ==============================
+# CORE IMPORTS
+# ==============================
+from backend.models import Base
+from backend.database import get_engine, seed_default_classes
 from backend.db_helpers import ensure_super_admin_exists
-Base.metadata.create_all(bind=engine)
+from sqlalchemy import text
 
-ensure_super_admin_exists()
-seed_default_classes()
 
-print("✅ Database ready.")
+# ==============================
+# INIT ENGINE (IMPORTANT FIX)
+# ==============================
+engine = get_engine()
+
+
+# ==============================
+# INIT DB
+# ==============================
+def init_database():
+    print("🔥 Initializing database...")
+
+    try:
+        # Create tables
+        Base.metadata.create_all(bind=engine)
+
+        # Sanity check connection
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+
+        print("✅ Database connection OK")
+
+        # Seed data safely
+        ensure_super_admin_exists()
+        seed_default_classes()
+
+        print("✅ Database ready.")
+
+    except Exception as e:
+        print("❌ Database initialization failed:")
+        print(e)
+        raise
+
+
+# ==============================
+# RUN
+# ==============================
+if __name__ == "__main__":
+    init_database()
