@@ -38,8 +38,6 @@ def resolve_database_url():
 # ENGINE (LAZY INIT)
 # ==============================
 _engine = None
-
-
 def get_engine():
     global _engine
 
@@ -48,13 +46,18 @@ def get_engine():
 
         _engine = create_engine(
             url,
-            poolclass=NullPool,
-            connect_args={"connect_timeout": 10},
+            pool_pre_ping=True,     # ✅ auto-check dead connections
+            pool_recycle=300,       # ✅ prevent idle disconnects (Render kills idle)
+            pool_size=5,
+            max_overflow=10,
+            connect_args={
+                "connect_timeout": 10,
+                "sslmode": "require",   # ✅ enforce SSL at driver level
+            },
             future=True,
         )
 
     return _engine
-
 
 # ==============================
 # SESSION
