@@ -596,7 +596,6 @@ def render_subjective_test(questions, subject):
 
 
 # backend/db_helpers.py
-from backend.database import get_session
 def handle_uploaded_subjective_questions(
     class_id: int,
     subject_id: int,

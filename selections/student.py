@@ -69,7 +69,11 @@ def get_student_display(student, class_name_map: dict) -> str:
 # Main Student Mode
 # ==============================
 def run_student_mode():
-    users_dict = get_users()
+    if "users_dict" not in st.session_state:
+        with st.spinner("Loading students..."):
+            st.session_state.users_dict = get_users()
+
+    users_dict = st.session_state.users_dict
 
     # =============================
     # SHOW SUBMISSION SUCCESS PAGE

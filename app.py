@@ -81,6 +81,8 @@ def main():
             st.session_state.menu_selection = mode_name
             st.rerun()
 
+    from sqlalchemy import text  # ✅ add this at top
+
     # ==========================
     # DB TEST BUTTON (SAFE)
     # ==========================
@@ -90,12 +92,14 @@ def main():
         try:
             engine = database.get_engine()
             with engine.connect() as conn:
-                conn.execute("SELECT 1")
+                result = conn.execute(text("SELECT 1"))
+                result.fetchall()  # force execution
+
             st.sidebar.success("✅ DB Connected")
+
         except Exception as e:
             st.sidebar.error("❌ DB Failed")
             st.sidebar.exception(e)
-
     # ==========================
     # ROUTING
     # ==========================

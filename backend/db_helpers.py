@@ -395,7 +395,8 @@ def require_admin_login(tenant_school_id: int | None = None):
     if login_button and username and password:
         db = get_session()
 
-        from backend.database import engine
+        from backend.database import get_engine
+        engine = get_engine()
         print("ENGINE URL:", engine.url)
         print("DB SESSION TYPE:", type(db))
 
@@ -817,27 +818,30 @@ def reset_student_retake_db(access_code, school_id=None):
 
 
 
-def get_users(school_id=None):
-    """
-    Return all students as a dict keyed by access_code.
-    - If school_id is provided → returns only that school’s students.
-    - Otherwise → returns all students (for super_admin).
-    """
+# ==============================
+# RAW DB FUNCTION (NO CACHE)
+# ==============================
+def _get_users_db(school_id=None):
     db = get_session()
+
+    if not db:
+        return {}
+
     try:
         query = db.query(Student)
+
         if school_id is not None:
             query = query.filter(Student.school_id == school_id)
 
         students = query.all()
 
         return {
-            s.access_code.strip().upper(): {
+            (s.access_code or "").strip().upper(): {
                 "id": s.id,
                 "name": s.name,
-                "class_id": s.class_id,          # ✅ USE ID
+                "class_id": s.class_id,
                 "unique_id": s.unique_id,
-                "access_code": s.access_code.strip().upper(),
+                "access_code": (s.access_code or "").strip().upper(),
                 "submitted": bool(s.submitted),
                 "school_id": s.school_id,
                 "can_retake": bool(s.can_retake),
@@ -845,8 +849,21 @@ def get_users(school_id=None):
             for s in students
         }
 
+    except Exception as e:
+        print("⚠️ get_users failed:", e)
+        return {}
+
     finally:
         db.close()
+
+
+# ==============================
+# CACHED VERSION (UI SAFE)
+# ==============================
+@st.cache_data(ttl=60, show_spinner=False)
+def get_users(school_id=None):
+    return _get_users_db(school_id)
+
 
 
 
