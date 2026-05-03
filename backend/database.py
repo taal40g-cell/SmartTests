@@ -25,19 +25,33 @@ _initialized = False
 # DB URL RESOLVER
 # ==============================
 def resolve_database_url():
+    """
+    Resolve database URL.
+    - Uses DATABASE_URL if provided (production)
+    - Falls back to local SQLite for development
+    """
+
     url = os.getenv("DATABASE_URL")
 
-    if not url:
-        print("⚠️ DATABASE_URL missing → running without DB")
-        return None
+    # -----------------------------
+    # 🌐 Production (Postgres)
+    # -----------------------------
+    if url:
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+psycopg2://", 1)
 
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+        if "sslmode" not in url:
+            url += "&sslmode=require" if "?" in url else "?sslmode=require"
 
-    if "sslmode" not in url:
-        url += "&sslmode=require" if "?" in url else "?sslmode=require"
+        return url
 
-    return url
+    # -----------------------------
+    # 💻 Local fallback (SQLite)
+    # -----------------------------
+    print("⚠️ DATABASE_URL missing → using local SQLite")
+
+    return "sqlite:///smarttest.db"
+
 
 
 # ==============================
@@ -50,24 +64,36 @@ def get_engine():
         return _engine
 
     url = resolve_database_url()
-    if not url:
-        return None
 
     try:
-        _engine = create_engine(
-            url,
-            pool_pre_ping=True,
-            pool_recycle=300,
-            pool_size=5,
-            max_overflow=2,
-            future=True,
-        )
+        # -----------------------------
+        # SQLite (local dev)
+        # -----------------------------
+        if url.startswith("sqlite"):
+            _engine = create_engine(
+                url,
+                connect_args={"check_same_thread": False},
+                future=True,
+            )
+
+        # -----------------------------
+        # Postgres (production)
+        # -----------------------------
+        else:
+            _engine = create_engine(
+                url,
+                pool_pre_ping=True,
+                pool_recycle=300,
+                pool_size=5,
+                max_overflow=2,
+                future=True,
+            )
+
         return _engine
 
     except Exception as e:
         print("⚠️ Engine creation failed:", e)
-        return None
-
+        raise  # 🚨 Do NOT silently return None anymore
 
 # ==============================
 # SESSION
@@ -267,11 +293,26 @@ def startup():
     if _initialized:
         return
 
+    engine = get_engine()
+
+    if engine is None:
+        print("⚠️ No DB engine → skipping full startup")
+        return
+
     try:
         init_db()
         add_missing_columns()
-        ensure_default_data()
-        seed_default_classes()
+
+        # ✅ Only run seed if DB is reachable
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+
+            ensure_default_data()
+            seed_default_classes()
+
+        except Exception as e:
+            print("⚠️ Seed skipped (DB unstable):", e)
 
         _initialized = True
         print("🔥 DB startup executed ONCE")
