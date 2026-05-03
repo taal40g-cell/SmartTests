@@ -1,5 +1,5 @@
 # ==============================
-# backend/database.py (PRODUCTION STABLE - RENDER SAFE)
+# backend/database.py (FINAL STABLE)
 # ==============================
 
 import os
@@ -15,6 +15,13 @@ from backend.security import hash_password
 
 
 # ==============================
+# GLOBAL STATE (CRITICAL FIX)
+# ==============================
+_engine = None
+_initialized = False
+
+
+# ==============================
 # DB URL RESOLVER
 # ==============================
 def resolve_database_url():
@@ -24,11 +31,9 @@ def resolve_database_url():
         print("⚠️ DATABASE_URL missing → running without DB")
         return None
 
-    # Fix deprecated Render format
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg2://", 1)
 
-    # Ensure SSL (Render requirement)
     if "sslmode" not in url:
         url += "&sslmode=require" if "?" in url else "?sslmode=require"
 
@@ -36,34 +41,31 @@ def resolve_database_url():
 
 
 # ==============================
-# ENGINE (SAFE LAZY INIT)
+# ENGINE
 # ==============================
-_engine = None
-
-
 def get_engine():
     global _engine
 
-    if _engine:
+    if _engine is not None:
         return _engine
 
     url = resolve_database_url()
-
     if not url:
         return None
 
     try:
         _engine = create_engine(
             url,
-            poolclass=NullPool,      # safest for Render free tier
-            pool_pre_ping=True,      # avoids stale connections
-            pool_recycle=300,        # prevents idle disconnects
+            pool_pre_ping=True,
+            pool_recycle=300,
+            pool_size=5,
+            max_overflow=2,
             future=True,
         )
         return _engine
 
     except Exception as e:
-        print("⚠️ DB engine init failed:", e)
+        print("⚠️ Engine creation failed:", e)
         return None
 
 
@@ -78,46 +80,50 @@ SessionLocal = sessionmaker(
 
 def get_session():
     engine = get_engine()
-    if not engine:
-        return None
+    if engine is None:
+        raise RuntimeError("Database engine not available")
+
     return SessionLocal(bind=engine)
 
 
 # ==============================
-# SAFE DB EXECUTOR
+# SAFE EXECUTOR
 # ==============================
 def db_execute(fn, retries=2):
     last_error = None
 
-    for _ in range(retries):
-        db = get_session()
-
-        if not db:
-            return None
+    for attempt in range(max(1, retries)):
+        db = None
 
         try:
+            db = get_session()
             return fn(db)
 
         except Exception as e:
-            db.rollback()
             last_error = e
 
-            # retry only network/SSL issues
-            if "SSL" in str(e) or "connection" in str(e).lower():
+            if db:
+                db.rollback()
+
+            # retry only transient errors
+            if (
+                ("SSL" in str(e) or "connection" in str(e).lower())
+                and attempt < retries - 1
+            ):
                 time.sleep(1)
                 continue
 
             raise
 
         finally:
-            db.close()
+            if db:
+                db.close()
 
-    print("⚠️ DB failed after retries:", last_error)
-    return None
+    raise last_error
 
 
 # ==============================
-# INIT DB (SAFE)
+# INIT DB
 # ==============================
 def init_db(retries=3, delay=2):
     engine = get_engine()
@@ -135,18 +141,17 @@ def init_db(retries=3, delay=2):
             return
 
         except OperationalError as e:
-            print(f"⚠️ init_db attempt {attempt+1} failed:", e)
+            print(f"⚠️ init_db attempt {attempt + 1} failed:", e)
             time.sleep(delay)
 
     print("⚠️ init_db skipped after retries")
 
 
 # ==============================
-# MIGRATIONS (SAFE / NON-CRASHING)
+# MIGRATIONS
 # ==============================
 def add_missing_columns():
     engine = get_engine()
-
     if not engine:
         return
 
@@ -182,12 +187,14 @@ def add_missing_columns():
 
 
 # ==============================
-# SEED DATA (SAFE)
+# SEED DATA
 # ==============================
 def ensure_default_data():
     from backend.models import School, User
 
     def _seed(db):
+        print("🔥 ensure_default_data RUNNING")
+
         school = db.query(School).first()
 
         if not school:
@@ -198,6 +205,8 @@ def ensure_default_data():
 
         admin = db.query(User).filter_by(role="super_admin").first()
 
+        print("👉 BEFORE FIX:", admin.school_id if admin else "NO ADMIN")
+
         if not admin:
             db.add(User(
                 username="super_admin",
@@ -206,8 +215,18 @@ def ensure_default_data():
                 password=hash_password("admin123"),
             ))
             db.commit()
+            print("✅ CREATED ADMIN")
+
+        else:
+            if admin.school_id is None:
+                admin.school_id = school.id
+                db.commit()
+                print("✅ FIXED ADMIN school_id")
+
+        print("👉 AFTER FIX:", admin.school_id if admin else "NO ADMIN")
 
     db_execute(_seed)
+
 
 
 def seed_default_classes():
@@ -240,13 +259,22 @@ def seed_default_classes():
 
 
 # ==============================
-# STARTUP ENTRY (SAFE)
+# STARTUP (IDEMPOTENT FIX)
 # ==============================
 def startup():
+    global _initialized
+
+    if _initialized:
+        return
+
     try:
         init_db()
         add_missing_columns()
         ensure_default_data()
         seed_default_classes()
+
+        _initialized = True
+        print("🔥 DB startup executed ONCE")
+
     except Exception as e:
-        print("⚠️ DB startup safe-failed:", e)
+        print("⚠️ DB startup failed:", e)
