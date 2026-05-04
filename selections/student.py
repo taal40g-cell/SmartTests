@@ -191,6 +191,8 @@ def run_student_mode():
         </style>
     """, unsafe_allow_html=True)
 
+
+
     # -------------------------
     # LOGIN (School + Access Code)
     # -------------------------
@@ -271,6 +273,9 @@ def run_student_mode():
                 "access_code": access_code,
                 "can_retake": bool(getattr(student_obj, "can_retake", True)),
             }
+
+            # 🔍 DEBUG (temporary)
+
 
             # -------------------------
             # Resolve names
