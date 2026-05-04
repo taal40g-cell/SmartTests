@@ -775,9 +775,6 @@ def run_student_mode():
         # -------------------------
         # AUTO LOCK
         # -------------------------
-        if record.submitted and not record.locked:
-            record.locked = True
-            db.commit()
 
         # -------------------------
         # SAFE FLAGS
@@ -956,9 +953,6 @@ def run_student_mode():
         # -------------------------
         # 🟩 RESUME TEST
         # -------------------------
-        # -------------------------
-        # 🟩 RESUME TEST
-        # -------------------------
         elif action == "resume":
 
             saved_progress = load_progress(
@@ -1040,7 +1034,6 @@ def run_student_mode():
             st.session_state.auto_submitted = False
             st.session_state.test_action = None
 
-
         # -------------------------
         # ⏱️ TIMER
         # -------------------------
@@ -1056,25 +1049,7 @@ def run_student_mode():
         st.info(f"⏱️ Time Left: {mins:02d}:{secs:02d}")
 
         # -------------------------
-        # 💾 CONTINUOUS SAVE (CRITICAL FIX)
-        # -------------------------
-        save_progress(
-            access_code=access_code,
-            subject_id=selected_subject_id,
-            class_id=class_id_int,
-            school_id=school_id_int,
-            test_type=st.session_state.test_type,
-            answers=st.session_state.answers,
-            current_q=st.session_state.current_q,
-            start_time=st.session_state.start_time,
-            duration=st.session_state.duration,
-            questions=[q.id for q in st.session_state.questions],
-            student_id=student_id,
-            submitted=False
-        )
-
-        # -------------------------
-        # 🔴 AUTO SUBMIT
+        # 🔴 AUTO SUBMIT (RUN FIRST)
         # -------------------------
         if remaining <= 0:
 
@@ -1099,8 +1074,28 @@ def run_student_mode():
                 )
 
                 st.success("✅ Test submitted automatically.")
+
+                st.session_state.test_started = False  # 🔥 STOP LOOP
                 st.stop()
 
+        # -------------------------
+        # 💾 CONTINUOUS SAVE (SAFE)
+        # -------------------------
+        if not is_submitted:
+            save_progress(
+                access_code=access_code,
+                subject_id=selected_subject_id,
+                class_id=class_id_int,
+                school_id=school_id_int,
+                test_type=st.session_state.test_type,
+                answers=st.session_state.answers,
+                current_q=st.session_state.current_q,
+                start_time=st.session_state.start_time,
+                duration=st.session_state.duration,
+                questions=[q.id for q in st.session_state.questions],
+                student_id=student_id,
+                submitted=False
+            )
 
 
 
