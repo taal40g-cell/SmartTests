@@ -40,11 +40,10 @@ from backend.db_helpers import (
     bulk_add_students_db,
     delete_subject,require_permission,
     handle_uploaded_questions,restore_question,
-    archive_question,create_default_classes_for_school,
+    archive_question,get_all_schools,
     require_admin_login,delete_school,
-    get_classes_by_school,load_classes_for_school,
     get_test_duration,get_current_school_id,add_submission_db,
-    set_test_duration,get_students_by_school,add_school,get_all_schools
+    set_test_duration,get_students_by_school,add_school,
 )
 
 from backend.database import get_session
@@ -532,22 +531,31 @@ def run_admin_mode():
             st.error("🚫 Selected school not found in database.")
             st.stop()
 
+
         st.info(f"🏫 Current School: {school_obj.name}")
 
         # --------------------------------------------------
         # 📚 CLASS (Filtered by Selected School)
         # --------------------------------------------------
+
         classes = db.query(Class).filter_by(school_id=school_id).all()
 
         if not classes:
             st.warning("⚠️ No classes found for this school.")
             st.stop()
 
+        # Keep IDs as integers
         class_lookup = {c.id: c.name for c in classes}
+
+        # Reset stale selection if school changed
+        if "bulk_class_select" in st.session_state:
+            if st.session_state.bulk_class_select not in class_lookup:
+                del st.session_state.bulk_class_select
+
 
         selected_class_id = st.selectbox(
             "🏫 Select Class",
-            list(class_lookup.keys()),
+            options=list(class_lookup.keys()),
             format_func=lambda cid: class_lookup[cid],
             key="bulk_class_select"
         )
@@ -1100,10 +1108,9 @@ def run_admin_mode():
         st.subheader("📚 Manage Subjects")
 
         # Choose class
-        # -------- CLASS SELECTION (UI stays non-ORM) --------
-        # -------- LOAD CLASSES FROM DB (PER SCHOOL) --------
         db = get_session()
-        school_id = get_current_school_id()
+
+        school_id = st.session_state.get("school_id")
 
         try:
             class_rows = (
@@ -1114,6 +1121,7 @@ def run_admin_mode():
             )
         finally:
             db.close()
+
 
         if not class_rows:
             st.warning("No classes found for this school.")
@@ -1129,15 +1137,22 @@ def run_admin_mode():
             key="subject_class_select"
         )
 
+
+
         # Resolve ID safely
-        class_id = class_map[selected_class_name]
 
-        # -------- RESOLVE REAL class_id FROM DB (once) --------
+        if "selected_class_id" not in st.session_state:
+            st.session_state.selected_class_id = class_map[selected_class_name]
+
+        class_id = st.session_state.selected_class_id
+
+        # 🔍 DEBUG
+
+
+        # -------- LOAD SUBJECTS --------
         db = get_session()
-        school_id = get_current_school_id()
-        subjects = []  # ✅ prevents UnboundLocalError
 
-        # -------- LOAD SUBJECTS (ID-BASED ONLY) --------
+        school_id = st.session_state.get("school_id")
         subjects = (
             db.query(Subject.id, Subject.name)
             .filter(
@@ -1149,6 +1164,7 @@ def run_admin_mode():
         )
 
         db.close()
+
 
         if subjects:
             for i, (subject_id, subject_name) in enumerate(subjects):
@@ -1195,6 +1211,8 @@ def run_admin_mode():
 
                     st.success(f"✅ Subject '{name}' added successfully.")
                     st.rerun()
+
+
 
                 except IntegrityError:
                     db.rollback()
@@ -1746,17 +1764,18 @@ def run_admin_mode():
 
 
     # =====================================================
-    # ✍️ Review Subjective Questions (SYNCED + SAFE)
+    # ✍️ Review Subjective Questions (FIXED + STABLE)
     # =====================================================
     elif selected_tab == "✍️ Review Subj Questions":
 
         import json
         from datetime import datetime
+        from sqlalchemy import text
 
         st.subheader("📋 Subjective Grading Dashboard")
 
         # ---------------------------------
-        # 🏫 GLOBAL SCHOOL (SYNCED)
+        # 🏫 SCHOOL CONTEXT
         # ---------------------------------
         school_id = st.session_state.get("school_id")
 
@@ -1765,7 +1784,7 @@ def run_admin_mode():
             st.stop()
 
         # ---------------------------------
-        # Helper
+        # 🔧 SAFE JSON PARSER
         # ---------------------------------
         def parse_json_field(data):
             if not data:
@@ -1775,12 +1794,12 @@ def run_admin_mode():
             if isinstance(data, str):
                 try:
                     return json.loads(data)
-                except Exception:
+                except:
                     return []
             return []
 
         # ---------------------------------
-        # Filters
+        # 🎛️ FILTER
         # ---------------------------------
         status_filter = st.selectbox(
             "Show submissions",
@@ -1792,7 +1811,19 @@ def run_admin_mode():
 
         try:
             # ---------------------------------
-            # Query
+            # 🔥 ENSURE COLUMN EXISTS (SAFE)
+            # ---------------------------------
+            try:
+                db.execute(text(
+                    "ALTER TABLE student_progress ADD COLUMN review_status TEXT DEFAULT 'pending'"
+                ))
+                db.commit()
+            except:
+                pass  # already exists
+
+
+            # ---------------------------------
+            # 📦 QUERY
             # ---------------------------------
             query = db.query(StudentProgress).filter(
                 StudentProgress.school_id == school_id,
@@ -1800,8 +1831,15 @@ def run_admin_mode():
                 StudentProgress.submitted == True
             )
 
+            from sqlalchemy import or_
+
             if status_filter == "Pending Review":
-                query = query.filter(StudentProgress.review_status == "pending")
+                query = query.filter(
+                    or_(
+                        StudentProgress.review_status.is_(None),
+                        StudentProgress.review_status == "pending"
+                    )
+                )
 
             elif status_filter == "Reviewed":
                 query = query.filter(StudentProgress.review_status == "reviewed")
@@ -1815,20 +1853,25 @@ def run_admin_mode():
                 st.stop()
 
             # ---------------------------------
-            # Render
+            # 🧾 RENDER SUBMISSIONS
             # ---------------------------------
             for sub in submissions:
 
                 student_name = getattr(sub.student, "name", f"Student {sub.student_id}")
                 subject_name = getattr(sub.subject, "name", "Unknown Subject")
 
-                is_reviewed = sub.review_status == "reviewed"
+                review_status = getattr(sub, "review_status", "pending") or "pending"
+                is_reviewed = review_status == "reviewed"
+
                 status_icon = "🟡 Pending" if not is_reviewed else "✅ Reviewed"
 
                 with st.expander(
                         f"{status_icon} | 👤 {student_name} | 📘 {subject_name}",
                         expanded=not is_reviewed
                 ):
+
+                    st.write("DEBUG review_status:", review_status)
+                    st.write("DEBUG is_reviewed:", is_reviewed)
 
                     st.markdown("### 📄 Student Answers")
 
@@ -1837,10 +1880,17 @@ def run_admin_mode():
 
                     scores = {}
 
+                    # ---------------------------------
+                    # ❌ NO ANSWERS
+                    # ---------------------------------
                     if not answers:
                         st.write("_No answers submitted_")
 
+                    # ---------------------------------
+                    # ✅ ANSWERS
+                    # ---------------------------------
                     else:
+
                         for idx, item in enumerate(answers, start=1):
 
                             question = (
@@ -1857,63 +1907,99 @@ def run_admin_mode():
 
                             col1, col2, col3 = st.columns([3, 5, 2])
 
+                            # -----------------------------
+                            # QUESTION
+                            # -----------------------------
                             with col1:
                                 st.markdown(f"**Q{idx}: {question}**")
 
+                            # -----------------------------
+                            # ANSWER
+                            # -----------------------------
                             with col2:
                                 st.markdown(answer or "_No answer submitted_")
 
+                            # -----------------------------
+                            # SCORE
+                            # -----------------------------
                             with col3:
-                                key = f"score_{sub.id}_{idx}"
+                                slider_key = f"score_{sub.id}_{idx}"
 
-                                # ✅ preserve value across reruns
-                                if key not in st.session_state:
-                                    st.session_state[key] = 0
-
-                                score = st.number_input(
-                                    "Score",
+                                score = st.slider(
+                                    f"Score Q{idx}",
                                     min_value=0,
-                                    max_value=10,
-                                    key=key,
+                                    max_value=100,
+                                    key=slider_key,
                                     disabled=is_reviewed
                                 )
 
                                 scores[idx] = score
-
                             st.markdown("---")
 
                     # ---------------------------------
-                    # Attachments
+                    # 📎 ATTACHMENTS
                     # ---------------------------------
                     if attachments:
+
                         st.markdown("### 📎 Attachments")
+
+                        # ensure safe structure
+                        if isinstance(attachments, str):
+                            try:
+                                import json
+                                attachments = json.loads(attachments)
+                            except Exception:
+                                attachments = [attachments]
+
+                        if not isinstance(attachments, list):
+                            attachments = [attachments]
+
                         for file in attachments:
-                            st.write(file)
+
+                            if isinstance(file, dict):
+                                st.write(file.get("name", file))
+                            else:
+                                st.write(str(file))
+                    # ---------------------------------
+                    # ✅ SUBMIT REVIEW
+                    # ---------------------------------
+                    st.write("DEBUG button disabled:", is_reviewed)
+
+                    submit_clicked = st.button(
+                        f"✅ Submit Review for {student_name}",
+                        key=f"submit_review_{sub.id}_{school_id}",
+                        disabled=is_reviewed
+                    )
 
                     # ---------------------------------
-                    # Submit Review
+                    # 💾 SAVE REVIEW
                     # ---------------------------------
-                    if st.button(
-                            f"✅ Submit Review for {student_name}",
-                            key=f"submit_review_{sub.id}",
-                            disabled=is_reviewed
-                    ):
+                    if submit_clicked:
+
                         total_score = sum(scores.values())
 
+                        total_questions = len(answers)
+
+                        max_score = total_questions * 100
+
+                        percent = (
+                            (total_score / max_score) * 100
+                            if max_score else 0
+                        )
+
+                        # -----------------------------
+                        # UPDATE PROGRESS
+                        # -----------------------------
                         sub.score = total_score
                         sub.review_status = "reviewed"
                         sub.reviewed_at = datetime.utcnow()
                         sub.locked = True
 
-                        # ---------------------------------
-                        # 🔥 CREATE TestResult (FINAL RESULT)
-                        # ---------------------------------
+                        # -----------------------------
+                        # SAVE RESULT
+                        # -----------------------------
                         from backend.models import TestResult
 
-                        total_questions = len(answers)
-                        percent = (total_score / total_questions * 100) if total_questions else 0
-
-                        # Prevent duplicates
                         existing_result = db.query(TestResult).filter_by(
                             student_id=sub.student_id,
                             subject_id=sub.subject_id,
@@ -1922,26 +2008,41 @@ def run_admin_mode():
                         ).first()
 
                         if not existing_result:
+
                             db.add(
                                 TestResult(
                                     student_id=sub.student_id,
                                     class_id=sub.class_id,
                                     subject_id=sub.subject_id,
                                     score=total_score,
-                                    total=total_questions,
+                                    total=max_score,
                                     percentage=percent,
                                     school_id=sub.school_id
                                 )
                             )
 
+                        else:
+
+                            existing_result.score = total_score
+                            existing_result.total = max_score
+                            existing_result.percentage = percent
+
                         db.commit()
 
-                        st.success(f"✅ Review saved for {student_name}!")
-                        st.rerun()
+                        # -----------------------------
+                        # CLEAN SESSION
+                        # -----------------------------
+                        for idx in range(1, len(answers) + 1):
+                            st.session_state.pop(
+                                f"score_state_{sub.id}_{idx}",
+                                None
+                            )
 
+                        st.success(f"✅ Review saved for {student_name}")
+
+                        st.rerun()
         finally:
             db.close()
-
 
 
 

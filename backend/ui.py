@@ -311,16 +311,41 @@ def generate_pdf(
     y -= 15
 
     data = [["#", "Question", "Your Answer", "Correct Answer", "Result"]]
-
     for i, d in enumerate(details, start=1):
-        question = (d.get("question_text") or "").strip()
-        your_answer = d.get("selected", "—")
-        correct_answer = d.get("correct_answer", "—")
-        is_correct = d.get("is_correct", False)
 
-        short_q = question[:65] + "..." if len(question) > 65 else question
+        # ---------------------------------
+        # SAFE PARSE
+        # ---------------------------------
+        if isinstance(d, dict):
+
+            question = (d.get("question_text") or "").strip()
+
+            your_answer = d.get("selected", "—")
+
+            correct_answer = d.get("correct_answer", "—")
+
+            is_correct = d.get("is_correct", False)
+
+        else:
+            # fallback for raw string entries
+            question = str(d).strip()
+
+            your_answer = "—"
+
+            correct_answer = "—"
+
+            is_correct = False
+
+        # ---------------------------------
+        # FORMAT
+        # ---------------------------------
+        short_q = (
+            question[:65] + "..."
+            if len(question) > 65
+            else question
+        )
+
         result = "✔ Correct" if is_correct else "✘ Wrong"
-
         data.append([str(i), short_q, your_answer, correct_answer, result])
 
     table = Table(data, colWidths=[30, 220, 90, 90, 70])

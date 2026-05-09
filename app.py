@@ -1,5 +1,23 @@
 import streamlit as st
+import os
+from dotenv import load_dotenv
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+
+# Load .env once
+load_dotenv(ENV_PATH)
+
+ENV = os.getenv("ENV", "local")
+
+# Debug ONLY ONCE
+if "env_debug_done" not in st.session_state:
+    print("📁 BASE_DIR:", BASE_DIR)
+    print("📄 ENV_PATH:", ENV_PATH)
+    print("📄 EXISTS:", os.path.exists(ENV_PATH))
+    print("🚀 ENV =", ENV)
+    print("📁 WORKING DIR:", os.getcwd())
+    st.session_state.env_debug_done = True
 # ==============================
 # SAFE IMPORTS
 # ==============================

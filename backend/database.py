@@ -1,102 +1,89 @@
 # ==============================
-# backend/database.py (FINAL STABLE)
+# backend/database.py (OPTIMIZED FIXED)
 # ==============================
 
 import os
 import time
+from functools import lru_cache
 
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.pool import NullPool
 
 from backend import models
 from backend.security import hash_password
 
-
 # ==============================
-# GLOBAL STATE (CRITICAL FIX)
+# GLOBAL STATE
 # ==============================
 _engine = None
 _initialized = False
 
 
 # ==============================
-# DB URL RESOLVER
+# ENV SAFE LOADER
+# ==============================
+def get_env():
+    return os.getenv("ENV", "local").strip().lower()
+
+
+# ==============================
+# DB URL RESOLVER (FAST)
 # ==============================
 def resolve_database_url():
-    """
-    Resolve database URL.
-    - Uses DATABASE_URL if provided (production)
-    - Falls back to local SQLite for development
-    """
+    env = get_env()
 
+    # ---------------- LOCAL ----------------
+    if env == "local":
+        return "sqlite:///smarttest.db"
+
+    # ---------------- PRODUCTION ----------------
     url = os.getenv("DATABASE_URL")
 
-    # -----------------------------
-    # 🌐 Production (Postgres)
-    # -----------------------------
-    if url:
-        if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+    if not url:
+        raise RuntimeError("DATABASE_URL missing in production")
 
-        if "sslmode" not in url:
-            url += "&sslmode=require" if "?" in url else "?sslmode=require"
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
 
-        return url
+    if "sslmode" not in url:
+        url += "&sslmode=require" if "?" in url else "?sslmode=require"
 
-    # -----------------------------
-    # 💻 Local fallback (SQLite)
-    # -----------------------------
-    print("⚠️ DATABASE_URL missing → using local SQLite")
-
-    return "sqlite:///smarttest.db"
-
+    return url
 
 
 # ==============================
-# ENGINE
+# ENGINE (CREATED ONCE ONLY)
 # ==============================
 def get_engine():
     global _engine
 
-    if _engine is not None:
+    if _engine:
         return _engine
 
     url = resolve_database_url()
 
-    try:
-        # -----------------------------
-        # SQLite (local dev)
-        # -----------------------------
-        if url.startswith("sqlite"):
-            _engine = create_engine(
-                url,
-                connect_args={"check_same_thread": False},
-                future=True,
-            )
+    if url.startswith("sqlite"):
+        _engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+            future=True,
+        )
+    else:
+        _engine = create_engine(
+            url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            pool_size=3,
+            max_overflow=1,
+            future=True,
+        )
 
-        # -----------------------------
-        # Postgres (production)
-        # -----------------------------
-        else:
-            _engine = create_engine(
-                url,
-                pool_pre_ping=True,
-                pool_recycle=300,
-                pool_size=5,
-                max_overflow=2,
-                future=True,
-            )
+    return _engine
 
-        return _engine
-
-    except Exception as e:
-        print("⚠️ Engine creation failed:", e)
-        raise  # 🚨 Do NOT silently return None anymore
 
 # ==============================
-# SESSION
+# SESSION (FAST BIND)
 # ==============================
 SessionLocal = sessionmaker(
     autoflush=False,
@@ -105,81 +92,47 @@ SessionLocal = sessionmaker(
 
 
 def get_session():
-    engine = get_engine()
-    if engine is None:
-        raise RuntimeError("Database engine not available")
-
-    return SessionLocal(bind=engine)
+    return SessionLocal(bind=get_engine())
 
 
 # ==============================
-# SAFE EXECUTOR
+# LIGHTWEIGHT DB EXECUTOR
 # ==============================
-def db_execute(fn, retries=2):
-    last_error = None
-
-    for attempt in range(max(1, retries)):
-        db = None
-
-        try:
-            db = get_session()
-            return fn(db)
-
-        except Exception as e:
-            last_error = e
-
-            if db:
-                db.rollback()
-
-            # retry only transient errors
-            if (
-                ("SSL" in str(e) or "connection" in str(e).lower())
-                and attempt < retries - 1
-            ):
-                time.sleep(1)
-                continue
-
-            raise
-
-        finally:
-            if db:
-                db.close()
-
-    raise last_error
+def db_execute(fn):
+    db = get_session()
+    try:
+        return fn(db)
+    finally:
+        db.close()
 
 
 # ==============================
-# INIT DB
+# INIT DB (RUN ONCE ONLY)
 # ==============================
-def init_db(retries=3, delay=2):
-    engine = get_engine()
+def init_db():
+    global _initialized
 
-    if not engine:
-        print("⚠️ DB not available → skipping init_db")
+    if _initialized:
         return
 
-    for attempt in range(retries):
-        try:
-            with engine.begin() as conn:
-                models.Base.metadata.create_all(bind=conn)
+    engine = get_engine()
 
-            print("✅ DB initialized")
-            return
+    try:
+        with engine.begin() as conn:
+            models.Base.metadata.create_all(bind=conn)
 
-        except OperationalError as e:
-            print(f"⚠️ init_db attempt {attempt + 1} failed:", e)
-            time.sleep(delay)
+        print("✅ DB initialized")
+        _initialized = True
 
-    print("⚠️ init_db skipped after retries")
+    except Exception as e:
+        print("⚠️ init_db failed:", e)
 
 
 # ==============================
-# MIGRATIONS
+# MIGRATIONS (SAFE)
 # ==============================
 def add_missing_columns():
     engine = get_engine()
-    if not engine:
-        return
 
     try:
         inspector = inspect(engine)
@@ -213,14 +166,13 @@ def add_missing_columns():
 
 
 # ==============================
-# SEED DATA
+# SEED DATA (CACHED PROTECTION)
 # ==============================
+@lru_cache(maxsize=1)
 def ensure_default_data():
     from backend.models import School, User
 
     def _seed(db):
-        print("🔥 ensure_default_data RUNNING")
-
         school = db.query(School).first()
 
         if not school:
@@ -231,8 +183,6 @@ def ensure_default_data():
 
         admin = db.query(User).filter_by(role="super_admin").first()
 
-        print("👉 BEFORE FIX:", admin.school_id if admin else "NO ADMIN")
-
         if not admin:
             db.add(User(
                 username="super_admin",
@@ -241,51 +191,15 @@ def ensure_default_data():
                 password=hash_password("admin123"),
             ))
             db.commit()
-            print("✅ CREATED ADMIN")
-
-        else:
-            if admin.school_id is None:
-                admin.school_id = school.id
-                db.commit()
-                print("✅ FIXED ADMIN school_id")
-
-        print("👉 AFTER FIX:", admin.school_id if admin else "NO ADMIN")
 
     db_execute(_seed)
 
 
 
-def seed_default_classes():
-    from backend.models import School, Class
-
-    def _seed(db):
-        schools = db.query(School).all()
-
-        defaults = ["JHS 1", "JHS 2", "JHS 3", "SHS 1", "SHS 2", "SHS 3"]
-
-        for school in schools:
-            existing = {
-                c.normalized_name
-                for c in db.query(Class).filter(Class.school_id == school.id)
-            }
-
-            for name in defaults:
-                norm = name.lower().strip()
-
-                if norm not in existing:
-                    db.add(Class(
-                        name=name,
-                        normalized_name=norm,
-                        school_id=school.id
-                    ))
-
-        db.commit()
-
-    db_execute(_seed)
 
 
 # ==============================
-# STARTUP (IDEMPOTENT FIX)
+# STARTUP (RUN ONCE ONLY)
 # ==============================
 def startup():
     global _initialized
@@ -294,28 +208,26 @@ def startup():
         return
 
     engine = get_engine()
-
     if engine is None:
-        print("⚠️ No DB engine → skipping full startup")
+        print("⚠️ No DB engine → skipping startup")
         return
 
     try:
-        init_db()
+        # ONLY RUN ONCE PER APP START
+        with engine.begin() as conn:
+            models.Base.metadata.create_all(bind=conn)
+
         add_missing_columns()
 
-        # ✅ Only run seed if DB is reachable
-        try:
-            with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
+        # lightweight ping only
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
 
-            ensure_default_data()
-            seed_default_classes()
-
-        except Exception as e:
-            print("⚠️ Seed skipped (DB unstable):", e)
+        ensure_default_data()
+        seed_default_classes()
 
         _initialized = True
-        print("🔥 DB startup executed ONCE")
+        print("🔥 DB startup complete")
 
     except Exception as e:
         print("⚠️ DB startup failed:", e)

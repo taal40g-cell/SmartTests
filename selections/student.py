@@ -292,7 +292,7 @@ def run_student_mode():
                 db.close()
 
             # -------------------------
-            # Persist session
+            # Persist session (LOGIN SUCCESS)
             # -------------------------
             st.session_state.update({
                 "logged_in": True,
@@ -308,48 +308,39 @@ def run_student_mode():
             # -------------------------
             # Reset stale session state
             # -------------------------
-            for k in [
-                "test_started", "submitted", "questions", "answers",
-                "current_q", "marked_for_review", "start_time",
-                "duration", "saved_to_db", "test_phase", "test_type"
-            ]:
-                st.session_state.pop(k, None)
-            # -------------------------
-            # Reset stale session state
-            # -------------------------
-            for k in [
-                "test_started", "submitted", "questions", "answers",
-                "current_q", "marked_for_review", "start_time",
-                "duration", "saved_to_db", "test_phase", "test_type"
-            ]:
+            reset_keys = [
+                "test_started",
+                "submitted",
+                "questions",
+                "answers",
+                "current_q",
+                "marked_for_review",
+                "start_time",
+                "duration",
+                "saved_to_db",
+                "test_phase",
+                "test_type"
+            ]
+
+            for k in reset_keys:
                 st.session_state.pop(k, None)
 
             # -------------------------
             # Clean Welcome UI
             # -------------------------
+            st.success(f"Welcome {student['name']} 🎉")
+
             st.markdown(f"""
             ### 👋 Welcome, {student['name']}
             🏫 **School:** {school_name}  
             🎓 **Class:** {class_name}  
-            📘 **Subject:** {st.session_state.get("subject") or "Select Subject"}
-             </div>
+            📘 **Subject:** Select Subject
             """, unsafe_allow_html=True)
 
-
-            import time
-            st.session_state.update({
-                "logged_in": True,
-                "student": student,
-                "student_id": student["id"],
-                "school_id": student["school_id"],
-                "class_id": student["class_id"],
-                "class_name": class_name,
-                "school_name": school_name,
-                "subject": None
-            })
-            time.sleep(5)  # ✅ stays visible for 5 seconds
+            # -------------------------
+            # Final rerun (ONLY ONCE)
+            # -------------------------
             st.rerun()
-
     # =========================================================
     # 📊 RESULTS CENTER (FIXED + CONSISTENT)
     # =========================================================
@@ -542,8 +533,15 @@ def run_student_mode():
                     if show_details:
                         for i, a in enumerate(details, 1):
                             st.markdown(f"**Q{i}**")
-                            st.write(f"Your Answer: {a.get('answer', '-')}")
-                            st.write(f"Teacher Mark: {a.get('score', '-')}")
+
+                            if isinstance(a, dict):
+                                st.write(f"Your Answer: {a.get('answer', '-')}")
+                                st.write(f"Teacher Mark: {a.get('score', '-')}")
+                            else:
+                                # It's a string
+                                st.write(f"Your Answer: {a}")
+                                st.write("Teacher Mark: -")
+
                             st.markdown("---")
 
                     pdf_bytes = generate_pdf(
