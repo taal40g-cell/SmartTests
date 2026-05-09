@@ -1,11 +1,8 @@
 # ==============================
-# backend/database.py (OPTIMIZED FIXED)
+# backend/database.py (CLEAN PRODUCTION VERSION)
 # ==============================
 
 import os
-import time
-from functools import lru_cache
-
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError
@@ -13,22 +10,23 @@ from sqlalchemy.exc import OperationalError
 from backend import models
 from backend.security import hash_password
 
+
 # ==============================
-# GLOBAL STATE
+# GLOBAL ENGINE STATE
 # ==============================
 _engine = None
 _initialized = False
 
 
 # ==============================
-# ENV SAFE LOADER
+# ENVIRONMENT
 # ==============================
 def get_env():
     return os.getenv("ENV", "local").strip().lower()
 
 
 # ==============================
-# DB URL RESOLVER (FAST)
+# DATABASE URL RESOLVER
 # ==============================
 def resolve_database_url():
     env = get_env()
@@ -41,11 +39,13 @@ def resolve_database_url():
     url = os.getenv("DATABASE_URL")
 
     if not url:
-        raise RuntimeError("DATABASE_URL missing in production")
+        raise RuntimeError("DATABASE_URL is missing in production environment")
 
+    # Fix legacy postgres URL format
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg2://", 1)
 
+    # Ensure SSL for hosted DBs (Render, etc.)
     if "sslmode" not in url:
         url += "&sslmode=require" if "?" in url else "?sslmode=require"
 
@@ -53,7 +53,7 @@ def resolve_database_url():
 
 
 # ==============================
-# ENGINE (CREATED ONCE ONLY)
+# ENGINE (SINGLETON)
 # ==============================
 def get_engine():
     global _engine
@@ -74,8 +74,8 @@ def get_engine():
             url,
             pool_pre_ping=True,
             pool_recycle=300,
-            pool_size=3,
-            max_overflow=1,
+            pool_size=5,
+            max_overflow=2,
             future=True,
         )
 
@@ -83,11 +83,11 @@ def get_engine():
 
 
 # ==============================
-# SESSION (FAST BIND)
+# SESSION FACTORY
 # ==============================
 SessionLocal = sessionmaker(
-    autoflush=False,
     autocommit=False,
+    autoflush=False,
 )
 
 
@@ -96,7 +96,7 @@ def get_session():
 
 
 # ==============================
-# LIGHTWEIGHT DB EXECUTOR
+# SAFE DB EXECUTOR
 # ==============================
 def db_execute(fn):
     db = get_session()
@@ -107,9 +107,13 @@ def db_execute(fn):
 
 
 # ==============================
-# INIT DB (RUN ONCE ONLY)
+# INIT DATABASE SCHEMA ONLY
 # ==============================
 def init_db():
+    """
+    ONLY creates tables. No seeding, no business logic.
+    Safe to call multiple times.
+    """
     global _initialized
 
     if _initialized:
@@ -121,17 +125,17 @@ def init_db():
         with engine.begin() as conn:
             models.Base.metadata.create_all(bind=conn)
 
-        print("✅ DB initialized")
         _initialized = True
+        print("✅ Database schema initialized")
 
     except Exception as e:
         print("⚠️ init_db failed:", e)
 
 
 # ==============================
-# MIGRATIONS (SAFE)
+# LIGHTWEIGHT MIGRATIONS
 # ==============================
-def add_missing_columns():
+def run_migrations():
     engine = get_engine()
 
     try:
@@ -166,10 +170,13 @@ def add_missing_columns():
 
 
 # ==============================
-# SEED DATA (CACHED PROTECTION)
+# DEFAULT SYSTEM DATA (SAFE SEED ONLY)
 # ==============================
-@lru_cache(maxsize=1)
-def ensure_default_data():
+def seed_core_data():
+    """
+    Only seeds absolute minimum system data.
+    NEVER seeds classes or business logic.
+    """
     from backend.models import School, User
 
     def _seed(db):
@@ -195,39 +202,42 @@ def ensure_default_data():
     db_execute(_seed)
 
 
-
-
-
 # ==============================
-# STARTUP (RUN ONCE ONLY)
+# STARTUP ORCHESTRATION
 # ==============================
 def startup():
+    """
+    Clean deterministic startup:
+    - no caching tricks
+    - no class seeding
+    - no duplicate generators
+    """
+
     global _initialized
 
     if _initialized:
         return
 
-    engine = get_engine()
-    if engine is None:
-        print("⚠️ No DB engine → skipping startup")
-        return
-
     try:
-        # ONLY RUN ONCE PER APP START
-        with engine.begin() as conn:
-            models.Base.metadata.create_all(bind=conn)
+        # 1. Create schema
+        init_db()
 
-        add_missing_columns()
+        # 2. Run safe migrations
+        run_migrations()
 
-        # lightweight ping only
-        with engine.connect() as conn:
+        # 3. DB health check
+        with get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
 
-        ensure_default_data()
-        seed_default_classes()
+        # 4. Seed ONLY core system data
+        seed_core_data()
 
         _initialized = True
-        print("🔥 DB startup complete")
+
+        print("🔥 Database startup complete")
+
+    except OperationalError as e:
+        print("⚠️ Database connection error:", e)
 
     except Exception as e:
-        print("⚠️ DB startup failed:", e)
+        print("⚠️ Startup failed:", e)
