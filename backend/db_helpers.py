@@ -286,6 +286,7 @@ def require_school_context():
 
     return school_id
 
+
 # ===============================================
 # Admin Login (Multi-Tenant / Super Admin support)
 # ===============================================
@@ -975,16 +976,15 @@ def get_objective_questions_db(
         db.close()
 
 
-def get_current_school_id() -> int | None:
-    """
-    Safely resolve the active school_id for the current session.
-    Works for super_admin, school_admin, and future extensions.
-    """
-    return (
-        st.session_state.get("school_id")
-        or st.session_state.get("admin_school_id")
-        or st.session_state.get("current_school_id")
-    )
+def get_current_school_id() -> int:
+    school_id = st.session_state.get("school_id")
+
+    if not school_id:
+        st.error("No active school selected.")
+        st.stop()
+
+    return int(school_id)
+
 
 
 def handle_uploaded_questions(
@@ -2227,6 +2227,8 @@ def save_progress(
     finally:
         db.close()
 
+
+
     # =============================================
     # load_progress
     # =============================================
@@ -3040,12 +3042,20 @@ def admin_review_panel():
 
 
 
-
 ROLE_PERMISSIONS = {
     "super_admin": ["all"],
-    "admin": ["manage_students", "upload_questions"],
-    "teacher": ["upload_questions"],
+
+    "admin": [
+        "manage_students",
+        "upload_questions",
+        "manage_subjects"   # ✅ ADD THIS
+    ],
+
+    "teacher": [
+        "upload_questions"
+    ],
 }
+
 
 def has_permission(role, action):
     perms = ROLE_PERMISSIONS.get(role, [])
@@ -3062,11 +3072,11 @@ def require_permission(action):
     role = st.session_state.get("admin_role") or st.session_state.get("role")
 
     if not role:
-        st.error("🚫 Not authenticated.")
+        st.warning("🚫 Not authenticated.")
         st.stop()
 
     if not has_permission(role, action):
-        st.error("🚫 You are not allowed to access this feature.")
+        st.warning("🚫 You are not allowed to access this feature.")
         st.stop()
 
 
