@@ -22,8 +22,19 @@ _initialized = False
 # ENVIRONMENT
 # ==============================
 def get_env():
-    return os.getenv("ENV", "local").strip().lower()
+    env = os.getenv("ENV")
 
+    if env is None:
+        raise RuntimeError(
+            "🚫 ENV is not set. Must be 'local' or 'production'."
+        )
+
+    env = env.strip().lower()
+
+    if env not in ("local", "production"):
+        raise RuntimeError(f"🚫 Invalid ENV value: {env}")
+
+    return env
 
 # ==============================
 # DATABASE URL RESOLVER
