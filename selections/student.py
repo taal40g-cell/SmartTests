@@ -1413,15 +1413,14 @@ def run_student_mode():
                 save_answer(
                     db=db,
                     progress_id=record.id,
-
+                    question_id=q["id"],
                     answer=st.session_state.answers[current_q_idx]
                 )
             finally:
                 db.close()
 
-
         # -------------------------
-        # 🟩 SUBJECTIVE QUESTIONquestion_id=q.id,
+        # 🟩 SUBJECTIVE QUESTION
         # -------------------------
         elif question_type == "subjective":
 
@@ -1474,7 +1473,6 @@ def run_student_mode():
             if is_submitted or is_locked:
                 st.info("✅ You have submitted this test. Answers are now locked.")
 
-            # Save to DB
             db = get_session()
             try:
                 save_answer(
@@ -1485,6 +1483,7 @@ def run_student_mode():
                 )
             finally:
                 db.close()
+
         # -------------------------
         # Navigation & Submit Buttons
         # -------------------------
