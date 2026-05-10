@@ -886,6 +886,7 @@ def run_student_mode():
     elif is_locked and retake_allowed:
         st.caption("🔁 Retake available.")
 
+
     # -------------------------
     # 🎯 MAIN TEST FLOW
     # -------------------------
@@ -938,6 +939,7 @@ def run_student_mode():
 
 
 
+
             # 🔥 SAVE INITIAL STATE
             save_progress(
                 access_code=access_code,
@@ -949,11 +951,10 @@ def run_student_mode():
                 current_q=st.session_state.current_q,
                 start_time=st.session_state.start_time,
                 duration=st.session_state.duration,
-                questions=[q.id for q in question_bank],
+                questions=[q["id"] for q in st.session_state.questions],
                 student_id=student_id,
                 submitted=False
             )
-
             st.session_state.test_action = None
             st.rerun()
 
@@ -1000,6 +1001,9 @@ def run_student_mode():
             # -------------------------
             # ✅ SAFE RESTORE
             # -------------------------
+            # -------------------------
+            # ✅ SAFE RESTORE
+            # -------------------------
 
             question_bank = (
                 objective_questions
@@ -1016,13 +1020,33 @@ def run_student_mode():
                 except:
                     saved_questions = []
 
-            if saved_questions:
-                qmap = {q.id: q for q in question_bank}
-                rebuilt = [qmap[qid] for qid in saved_questions if qid in qmap]
-                st.session_state.questions = rebuilt if rebuilt else question_bank
-            else:
-                st.session_state.questions = question_bank
+            # ✅ normalize questions
+            normalized_questions = [
+                {
+                    "id": q.id,
+                    "text": q.question_text,
+                    "options": getattr(q, "options", None),
+                    "correct_answer": getattr(q, "correct_answer", "")
+                }
+                for q in question_bank
+            ]
 
+            if saved_questions:
+
+                qmap = {q["id"]: q for q in normalized_questions}
+
+                rebuilt = [
+                    qmap[qid]
+                    for qid in saved_questions
+                    if qid in qmap
+                ]
+
+                st.session_state.questions = (
+                    rebuilt if rebuilt else normalized_questions
+                )
+
+            else:
+                st.session_state.questions = normalized_questions
             st.session_state.answers = saved_progress.get(
                 "answers", [""] * len(st.session_state.questions)
             )
@@ -1057,9 +1081,10 @@ def run_student_mode():
 
         st.info(f"⏱️ Time Left: {mins:02d}:{secs:02d}")
 
+
+
         # -------------------------
         # 🔴 AUTO SUBMIT (RUN FIRST)
-        # -------------------------
         if remaining <= 0:
 
             if not st.session_state.get("auto_submitted", False):
@@ -1077,19 +1102,19 @@ def run_student_mode():
                     current_q=st.session_state.current_q,
                     start_time=st.session_state.start_time,
                     duration=st.session_state.duration,
-                    questions=[q.id for q in st.session_state.questions],
+                    questions=[q["id"] for q in st.session_state.questions],
                     student_id=student_id,
                     submitted=True
                 )
 
                 st.success("✅ Test submitted automatically.")
 
-                st.session_state.test_started = False  # 🔥 STOP LOOP
+                st.session_state.test_started = False
                 st.stop()
-
         # -------------------------
         # 💾 CONTINUOUS SAVE (SAFE)
         # -------------------------
+        # 💾 CONTINUOUS SAVE (SAFE)
         if not is_submitted:
             save_progress(
                 access_code=access_code,
@@ -1101,11 +1126,10 @@ def run_student_mode():
                 current_q=st.session_state.current_q,
                 start_time=st.session_state.start_time,
                 duration=st.session_state.duration,
-                questions=[q.id for q in st.session_state.questions],
+                questions=[q["id"] for q in st.session_state.questions],
                 student_id=student_id,
                 submitted=False
             )
-
 
 
         # -------------------------
@@ -1339,7 +1363,7 @@ def run_student_mode():
         )
 
         q = questions[current_q_idx]
-        question_text = field(q, "question_text") or field(q, "question") or "No question text"
+        question_text = q.get("text", "No question text")
         st.markdown(
             f"""
             <div class="question-text">
@@ -1389,7 +1413,7 @@ def run_student_mode():
                 save_answer(
                     db=db,
                     progress_id=record.id,
-                    question_id=q.id,
+
                     answer=st.session_state.answers[current_q_idx]
                 )
             finally:
@@ -1397,7 +1421,7 @@ def run_student_mode():
 
 
         # -------------------------
-        # 🟩 SUBJECTIVE QUESTION
+        # 🟩 SUBJECTIVE QUESTIONquestion_id=q.id,
         # -------------------------
         elif question_type == "subjective":
 
@@ -1456,7 +1480,7 @@ def run_student_mode():
                 save_answer(
                     db=db,
                     progress_id=record.id,
-                    question_id=q.id,
+                    question_id=q["id"],
                     answer=answer
                 )
             finally:
@@ -1684,25 +1708,23 @@ def run_student_mode():
                         for q, ans in zip(st.session_state.questions, st.session_state.answers):
 
                             correct_answer = q.get("correct_answer", "")
-                            question_text = q.get("text", "")
-                            q_id = q.get("id")
 
                             is_correct = (
                                     str(ans).strip().lower()
-                                    == str(correct_answer).strip().lower()
+                                    ==
+                                    str(correct_answer).strip().lower()
                             )
 
                             if is_correct:
                                 correct_count += 1
 
                             details.append({
-                                "question_id": q_id,
-                                "question_text": question_text,
+                                "question_id": q.get("id"),
+                                "question_text": q.get("text", "No question text"),
                                 "selected": ans or "—",
                                 "correct": correct_answer or "—",
                                 "is_correct": is_correct
                             })
-
 
                         total_questions = len(details)
 
