@@ -770,9 +770,7 @@ def run_student_mode():
             db.commit()
             db.refresh(record)
 
-        # -------------------------
-        # AUTO LOCK
-        # -------------------------
+
 
         # -------------------------
         # SAFE FLAGS
@@ -1402,7 +1400,11 @@ def run_student_mode():
             if current_key not in st.session_state:
                 st.session_state[current_key] = st.session_state.answers[current_q_idx]
 
-            time_up_or_submitted = time_up or st.session_state.get("submitted", False)
+            time_up_or_submitted = (
+                    time_up
+                    or is_submitted
+                    or is_locked
+            )
 
             answer = st.text_area(
                 "Type your answer:",
@@ -1411,8 +1413,9 @@ def run_student_mode():
                 disabled=time_up_or_submitted
             )
 
-            # Sync answer
-            if not st.session_state.get("submitted", False):
+
+
+            if not (is_submitted or is_locked):
                 st.session_state.answers[current_q_idx] = answer
 
             # Sticky warning
@@ -1432,7 +1435,7 @@ def run_student_mode():
             </div>
             """, unsafe_allow_html=True)
 
-            if st.session_state.get("submitted", False):
+            if is_submitted or is_locked:
                 st.info("✅ You have submitted this test. Answers are now locked.")
 
             # Save to DB
@@ -1529,10 +1532,9 @@ def run_student_mode():
                 answered_count = st.session_state.get("answered_count", 0)
 
                 # Update session state: lock test
-                st.session_state.submitted = True
+                # Reset flow state only
                 st.session_state.test_started = False
-                st.session_state.final_submit = False  # prevent rerun loop
-
+                st.session_state.final_submit = False
                 st.toast(f"You answered {answered_count}/{len(questions)} questions.")
 
                 # Safe start_time conversion
