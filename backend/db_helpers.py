@@ -980,11 +980,21 @@ def get_current_school_id() -> int:
     school_id = st.session_state.get("school_id")
 
     if not school_id:
-        st.error("No active school selected.")
+        st.error("🚫 No active school selected.")
         st.stop()
 
-    return int(school_id)
+    school_id = int(school_id)
 
+    db = get_session()
+    exists = db.query(School.id).filter_by(id=school_id).first()
+    db.close()
+
+    if not exists:
+        st.session_state["school_id"] = None
+        st.error("🚫 Selected school no longer exists.")
+        st.stop()
+
+    return school_id
 
 
 def handle_uploaded_questions(
@@ -2115,10 +2125,6 @@ def has_submitted_test(
 
 
 
-# =============================================
-# save_progress
-# =============================================
-
 def save_progress(
         access_code,
         subject_id,
@@ -2133,22 +2139,20 @@ def save_progress(
         student_id=None,
         submitted=False
 ):
-    print("🔥 save_progress CALLED")
-    def normalize_question(q):
-        if isinstance(q, (int, str)):
-            return q
-        return getattr(q, "id", q)
 
     db = get_session()
 
     try:
         # Normalize question IDs
+        def normalize_question(q):
+            if isinstance(q, (int, str)):
+                return q
+            return getattr(q, "id", q)
+
         question_list = [normalize_question(q) for q in questions]
 
         # Safe start_time handling
-        if start_time is None:
-            safe_start_time = datetime.now().timestamp()
-        elif isinstance(start_time, datetime):
+        if isinstance(start_time, datetime):
             safe_start_time = start_time.timestamp()
         elif isinstance(start_time, (int, float)):
             safe_start_time = float(start_time)
@@ -2157,22 +2161,19 @@ def save_progress(
 
         safe_duration = int(duration) if duration else 0
 
-        # ---------------------------------------------
-        # Find existing progress record
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # STRICT IDENTITY (NO access_code here)
+        # -------------------------------------------------
         existing = db.query(StudentProgress).filter_by(
             student_id=student_id,
-            access_code=access_code,
             subject_id=subject_id,
             class_id=class_id,
             school_id=school_id,
             test_type=test_type
-        ).first()
-
-
+        ).one_or_none()
 
         # =============================================
-        # UPDATE EXISTING RECORD
+        # UPDATE EXISTING
         # =============================================
         if existing:
 
@@ -2181,18 +2182,18 @@ def save_progress(
             existing.start_time = safe_start_time
             existing.duration = safe_duration
             existing.questions = question_list
-            existing.submitted = bool(submitted)
 
-            if student_id:
-                existing.student_id = student_id
+            # 🔥 Only upgrade submission, never downgrade
+            if submitted:
+                existing.submitted = True
 
-            # Auto-grade objective tests
+            # Auto-grade objective
             if submitted and test_type == "objective":
                 existing.review_status = "Auto Graded"
                 existing.reviewed_at = datetime.utcnow()
 
         # =============================================
-        # CREATE NEW RECORD
+        # CREATE NEW
         # =============================================
         else:
 
@@ -2211,7 +2212,6 @@ def save_progress(
                 submitted=bool(submitted),
             )
 
-            # Auto-grade objective tests
             if submitted and test_type == "objective":
                 new_record.review_status = "Auto Graded"
                 new_record.reviewed_at = datetime.utcnow()
@@ -2226,7 +2226,6 @@ def save_progress(
 
     finally:
         db.close()
-
 
 
     # =============================================

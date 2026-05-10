@@ -354,7 +354,7 @@ def run_admin_mode():
     if selected_tab == "🏫 Manage Schools" and admin_role == "super_admin":
         st.subheader("🏫 Manage Schools")
 
-        schools = [s for s in (get_all_schools() or []) if s.id != 1]
+        schools = [s for s in get_all_schools() if not s.is_system]
 
         if schools:
             df_schools = pd.DataFrame([
@@ -414,17 +414,26 @@ def run_admin_mode():
 
             if st.button("Delete Selected School"):
                 try:
+                    # 🚨 SAFETY: prevent deleting currently active school
+                    active_school_id = st.session_state.get("school_id")
+
+                    if selected_school.id == active_school_id:
+                        st.error("🚫 Cannot delete the currently active school.")
+                        st.stop()
+
                     ok = delete_school(selected_school.id)
+
                     if ok:
                         st.success(f"✅ '{selected_school.name}' deleted.")
                         st.rerun()
                     else:
-                        st.error("Failed to delete school.")
+                        st.error("🚫 Failed to delete school.")
+
                 except Exception as e:
                     st.error(f"🚫 Error deleting school: {e}")
-        else:
-            st.warning("No schools match your search.")
 
+            else:
+                st.warning("No schools match your search.")
 
 
 

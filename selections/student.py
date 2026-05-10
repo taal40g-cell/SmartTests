@@ -1235,14 +1235,12 @@ def run_student_mode():
             unsafe_allow_html=True
         )
 
-
-
         # -------------------------
         # ⛔ Auto-submit when time is up
         # -------------------------
-        if remaining_seconds <= 0 and not st.session_state.get("submitted", False):
+        if remaining_seconds <= 0 and not is_submitted:
+
             st.warning("⏰ Time is up! Submitting your test automatically...")
-            st.session_state.submitted = True
 
             start_time_ts = (
                 st.session_state.start_time.timestamp()
@@ -1252,32 +1250,23 @@ def run_student_mode():
 
             subject_id = selected_subject.id
 
-            # 1️⃣ Save progress (existing logic)
-            # ✅ CONTEXT FIRST
-            class_obj = next((c for c in st.session_state.get("classes", []) if c.id == class_id_int), None)
-            class_name = class_obj.name if class_obj else "Unknown Class"
-
-            school_obj = next((s for s in st.session_state.get("schools", []) if s.id == school_id_int), None)
-            school_name = school_obj.name if school_obj else "Unknown School"
-
-            # 1️⃣ Save progress
+            # 1️⃣ Save final progress (submitted=True)
             save_progress(
                 access_code=access_code,
                 student_id=student_id,
                 subject_id=subject_id,
-                class_id=class_id_int,  # 🔥 FIXED
+                class_id=class_id_int,
+                school_id=school_id_int,
+                test_type=st.session_state.test_type,
                 answers=st.session_state.answers,
                 current_q=st.session_state.current_q,
                 start_time=start_time_ts,
                 duration=st.session_state.duration,
-                questions=st.session_state.questions,
-                school_id=school_id_int,
-                test_type=st.session_state.test_type,
+                questions=[q.id for q in st.session_state.questions],
                 submitted=True
             )
 
-
-            # 2️⃣ Save StudentAnswer properly
+            # 2️⃣ Persist answers safely
             db = get_session()
             try:
                 progress = db.query(StudentProgress).filter_by(
@@ -1310,8 +1299,11 @@ def run_student_mode():
             finally:
                 db.close()
 
+            # 3️⃣ Stop test execution cleanly
             st.success("✅ Test submitted automatically.")
+            st.session_state.test_started = False
             st.stop()
+
 
         # -------------------------
         # Render current question
