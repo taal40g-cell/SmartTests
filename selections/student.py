@@ -1067,9 +1067,26 @@ def run_student_mode():
 
             else:
                 st.session_state.questions = normalized_questions
-            st.session_state.answers = saved_progress.get(
-                "answers", [""] * len(st.session_state.questions)
+            saved_answers = saved_progress.get(
+                "answers",
+                [""] * len(st.session_state.questions)
             )
+
+            # ✅ FIX: decode JSON/string answers safely
+            if isinstance(saved_answers, str):
+
+                try:
+                    import json
+                    saved_answers = json.loads(saved_answers)
+
+                except Exception:
+                    saved_answers = [""] * len(st.session_state.questions)
+
+            # ✅ ensure answers is always a list
+            if not isinstance(saved_answers, list):
+                saved_answers = [""] * len(st.session_state.questions)
+
+            st.session_state.answers = saved_answers
 
             st.session_state.current_q = min(
                 max(saved_progress.get("current_q", 0), 0),
@@ -1232,7 +1249,7 @@ def run_student_mode():
                 return obj.get(name, default)
             return getattr(obj, name, default)
 
-        # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
+
         # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
         if st.session_state.get("test_started") and not st.session_state.get("test_end_time"):
             duration_minutes = get_test_duration(
