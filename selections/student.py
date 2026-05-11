@@ -913,12 +913,20 @@ def run_student_mode():
             )
 
             # ✅ FIX: normalize question structure (CRITICAL)
+            # ✅ FIX: normalize question structure (CRITICAL)
             st.session_state.questions = [
                 {
                     "id": q.id,
                     "text": q.question_text,
-                    "options": q.options,
-                    "correct_answer": q.correct_answer
+
+                    # ✅ SAFE for subjective questions
+                    "options": getattr(q, "options", []),
+
+                    # ✅ SAFE for subjective questions
+                    "correct_answer": getattr(q, "correct_answer", ""),
+
+                    # ✅ preserve type
+                    "question_type": st.session_state.test_type
                 }
                 for q in question_bank
             ]
