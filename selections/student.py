@@ -912,32 +912,31 @@ def run_student_mode():
                 else subjective_questions
             )
 
-            # ✅ FIX: normalize question structure (CRITICAL)
-            # ✅ FIX: normalize question structure (CRITICAL)
-            st.session_state.questions = [
-                {
+            # ✅ SAFE NORMALIZATION (FIXED)
+            st.session_state.questions = []
+
+            for q in question_bank:
+
+                question_dict = {
                     "id": q.id,
                     "text": q.question_text,
-
-                    # ✅ SAFE for subjective questions
-                    "options": getattr(q, "options", []),
-
-                    # ✅ SAFE for subjective questions
-                    "correct_answer": getattr(q, "correct_answer", ""),
-
-                    # ✅ preserve type
-                    "question_type": st.session_state.test_type
                 }
-                for q in question_bank
-            ]
 
-            # reset answers based on normalized structure
+                if st.session_state.test_type == "objective":
+                    question_dict["options"] = getattr(q, "options", [])
+                    question_dict["correct_answer"] = getattr(q, "correct_answer", "")
+                else:
+                    question_dict["options"] = None
+                    question_dict["correct_answer"] = None
+
+                st.session_state.questions.append(question_dict)
+
+            # reset answers
             st.session_state.answers = [""] * len(st.session_state.questions)
             st.session_state.current_q = 0
 
             st.session_state.start_time = datetime.now()
             st.session_state.duration = duration_minutes * 60
-
             st.session_state.test_end_time = (
                     st.session_state.start_time +
                     timedelta(seconds=st.session_state.duration)
@@ -945,7 +944,6 @@ def run_student_mode():
 
             st.session_state.marked_for_review = set()
             st.session_state.auto_submitted = False
-
 
 
 
