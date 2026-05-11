@@ -322,7 +322,11 @@ def generate_pdf(
 
             your_answer = d.get("selected", "—")
 
-            correct_answer = d.get("correct_answer", "—")
+            correct_answer = (
+                    d.get("correct")
+                    or d.get("correct_answer")
+                    or "—"
+            )
 
             is_correct = d.get("is_correct", False)
 

@@ -475,6 +475,7 @@ def run_student_mode():
                         school_id=school_id
                     )
 
+
                     st.download_button(
                         "📄 Download Result PDF",
                         pdf_bytes,
@@ -947,7 +948,18 @@ def run_student_mode():
                 class_id=class_id_int,
                 school_id=school_id_int,
                 test_type=st.session_state.test_type,
-                answers=st.session_state.answers,
+
+                # ✅ FIXED HERE
+                answers=json.dumps([
+                    {
+                        "question_id": q["id"],
+                        "selected": "",
+                        "correct": "",
+                        "is_correct": False
+                    }
+                    for q in st.session_state.questions
+                ]),
+
                 current_q=st.session_state.current_q,
                 start_time=st.session_state.start_time,
                 duration=st.session_state.duration,
@@ -955,6 +967,7 @@ def run_student_mode():
                 student_id=student_id,
                 submitted=False
             )
+
             st.session_state.test_action = None
             st.rerun()
 
@@ -998,9 +1011,7 @@ def run_student_mode():
                 st.session_state.test_action = None
                 st.stop()
 
-            # -------------------------
-            # ✅ SAFE RESTORE
-            # -------------------------
+
             # -------------------------
             # ✅ SAFE RESTORE
             # -------------------------
@@ -1081,10 +1092,9 @@ def run_student_mode():
 
         st.info(f"⏱️ Time Left: {mins:02d}:{secs:02d}")
 
-
-
         # -------------------------
         # 🔴 AUTO SUBMIT (RUN FIRST)
+        # -------------------------
         if remaining <= 0:
 
             if not st.session_state.get("auto_submitted", False):
@@ -1092,13 +1102,37 @@ def run_student_mode():
 
                 st.warning("⏰ Time is up! Submitting your test automatically...")
 
+                # -------------------------
+                # Build structured answers (IMPORTANT FIX)
+                # -------------------------
+                details = []
+
+                for q, ans in zip(st.session_state.questions, st.session_state.answers):
+                    correct_answer = q.get("correct_answer", "")
+
+                    is_correct = (
+                            str(ans).strip().lower()
+                            == str(correct_answer).strip().lower()
+                    )
+
+                    details.append({
+                        "question_id": q.get("id"),
+                        "question_text": q.get("text", ""),
+                        "selected": ans or "—",
+                        "correct": correct_answer or "—",
+                        "is_correct": is_correct
+                    })
+
+                # -------------------------
+                # Save to DB (FIXED FORMAT)
+                # -------------------------
                 save_progress(
                     access_code=access_code,
                     subject_id=selected_subject_id,
                     class_id=class_id_int,
                     school_id=school_id_int,
                     test_type=st.session_state.test_type,
-                    answers=st.session_state.answers,
+                    answers=json.dumps(details),
                     current_q=st.session_state.current_q,
                     start_time=st.session_state.start_time,
                     duration=st.session_state.duration,
@@ -1111,18 +1145,41 @@ def run_student_mode():
 
                 st.session_state.test_started = False
                 st.stop()
+
         # -------------------------
         # 💾 CONTINUOUS SAVE (SAFE)
         # -------------------------
-        # 💾 CONTINUOUS SAVE (SAFE)
         if not is_submitted:
+
+            # IMPORTANT: keep DB format consistent
+            details = []
+
+            for q, ans in zip(st.session_state.questions, st.session_state.answers):
+                correct_answer = q.get("correct_answer", "")
+
+                is_correct = (
+                        str(ans).strip().lower()
+                        == str(correct_answer).strip().lower()
+                )
+
+                details.append({
+                    "question_id": q.get("id"),
+                    "question_text": q.get("text", ""),
+                    "selected": ans or "—",
+                    "correct": correct_answer or "—",
+                    "is_correct": is_correct
+                })
+
             save_progress(
                 access_code=access_code,
                 subject_id=selected_subject_id,
                 class_id=class_id_int,
                 school_id=school_id_int,
                 test_type=st.session_state.test_type,
-                answers=st.session_state.answers,
+
+                # ✅ FIXED FORMAT (no raw strings anymore)
+                answers=json.dumps(details),
+
                 current_q=st.session_state.current_q,
                 start_time=st.session_state.start_time,
                 duration=st.session_state.duration,
@@ -1130,7 +1187,6 @@ def run_student_mode():
                 student_id=student_id,
                 submitted=False
             )
-
 
         # -------------------------
         # Safe options parser + cleaner
@@ -1168,6 +1224,7 @@ def run_student_mode():
             return getattr(obj, name, default)
 
         # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
+        # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
         if st.session_state.get("test_started") and not st.session_state.get("test_end_time"):
             duration_minutes = get_test_duration(
                 class_id=class_id,
@@ -1181,18 +1238,28 @@ def run_student_mode():
                 else subjective_questions
             )
 
-            st.session_state.answers = [""] * len(st.session_state.questions)
+            # IMPORTANT: initialize in STRUCTURED format (not strings)
+            st.session_state.answers = [
+                {
+                    "question_id": q.id if hasattr(q, "id") else q.get("id"),
+                    "selected": "",
+                    "correct": "",
+                    "is_correct": False
+                }
+                for q in st.session_state.questions
+            ]
+
             st.session_state.current_q = 0
             st.session_state.start_time = datetime.now()
             st.session_state.duration = duration_minutes * 60
 
             st.session_state.test_end_time = (
-                    st.session_state.start_time + timedelta(seconds=st.session_state.duration)
+                    st.session_state.start_time
+                    + timedelta(seconds=st.session_state.duration)
             )
 
             st.session_state.marked_for_review = set()
             st.session_state.paste_count = 0
-
 
         # =============================
         # ⏱️ TIMER (BEFORE RENDER)
@@ -1314,11 +1381,13 @@ def run_student_mode():
                 ).first()
 
                 if progress:
-                    for q, ans in zip(st.session_state.questions, st.session_state.answers):
+                    for i, q in enumerate(st.session_state.questions):
+
+                        ans = st.session_state.answers[i] if i < len(st.session_state.answers) else ""
 
                         existing = db.query(StudentAnswer).filter_by(
                             progress_id=progress.id,
-                            question_id=q["id"]  # ✅ FIXED
+                            question_id=q["id"]
                         ).first()
 
                         if existing:
@@ -1326,11 +1395,11 @@ def run_student_mode():
                         else:
                             db.add(StudentAnswer(
                                 progress_id=progress.id,
-                                question_id=q["id"],  # ✅ FIXED
+                                question_id=q["id"],
                                 answer=ans
                             ))
 
-                db.commit()
+                    db.commit()
 
             finally:
                 db.close()
