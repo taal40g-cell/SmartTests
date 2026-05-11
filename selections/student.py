@@ -945,6 +945,9 @@ def run_student_mode():
             st.session_state.marked_for_review = set()
             st.session_state.auto_submitted = False
 
+            # ✅ ADD HERE
+            st.session_state.submitted = False
+            st.session_state.locked = False
 
 
             # 🔥 SAVE INITIAL STATE
@@ -1477,6 +1480,7 @@ def run_student_mode():
                 key=f"q_{current_q_idx}",
                 disabled=time_up or st.session_state.get("submitted", False)
             )
+
 
             st.session_state.answers[current_q_idx] = (
                 "" if selected_option == "Choose answer" else selected_option
