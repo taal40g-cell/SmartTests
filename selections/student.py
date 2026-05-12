@@ -950,6 +950,7 @@ def run_student_mode():
             st.session_state.locked = False
 
 
+
             # 🔥 SAVE INITIAL STATE
             save_progress(
                 access_code=access_code,
@@ -1202,10 +1203,7 @@ def run_student_mode():
                 class_id=class_id_int,
                 school_id=school_id_int,
                 test_type=st.session_state.test_type,
-
-                # ✅ FIXED FORMAT (no raw strings anymore)
                 answers=json.dumps(details),
-
                 current_q=st.session_state.current_q,
                 start_time=st.session_state.start_time,
                 duration=st.session_state.duration,
@@ -1515,6 +1513,8 @@ def run_student_mode():
             finally:
                 db.close()
 
+
+
         # -------------------------
         # 🟩 SUBJECTIVE QUESTION
         # -------------------------
@@ -1662,13 +1662,19 @@ def run_student_mode():
 
                 answered_count = st.session_state.get("answered_count", 0)
 
-                # Update session state: lock test
-                # Reset flow state only
+                # -------------------------
+                # Reset flow state
+                # -------------------------
                 st.session_state.test_started = False
                 st.session_state.final_submit = False
-                st.toast(f"You answered {answered_count}/{len(questions)} questions.")
 
-                # Safe start_time conversion
+                st.toast(
+                    f"You answered {answered_count}/{len(questions)} questions."
+                )
+
+                # -------------------------
+                # Safe start time conversion
+                # -------------------------
                 start_time_ts = (
                     st.session_state.start_time.timestamp()
                     if isinstance(st.session_state.start_time, datetime)
@@ -1678,17 +1684,16 @@ def run_student_mode():
                 subject_id = selected_subject.id
                 test_type = st.session_state.test_type
 
-
-                # =========================
-                # SUBJECTIVE TEST
-                # =========================
-                # =========================
-                # SUBJECTIVE TEST
-                # =========================
+                # =====================================================
+                # SUBJECTIVE TEST SUBMISSION
+                # =====================================================
                 if test_type == "subjective":
 
                     try:
 
+                        # -------------------------
+                        # Save subjective submission
+                        # -------------------------
                         result = handle_subjective_submission(
                             student_id=student_id,
                             school_id=school_id_int,
@@ -1699,90 +1704,203 @@ def run_student_mode():
 
                         if result == "already_submitted":
                             st.info("📌 You have already submitted this retake.")
+                            st.stop()
 
-                        else:
+                        # -------------------------
+                        # Update progress safely
+                        # -------------------------
+                        db = get_session()
 
-                            # -------------------------
-                            # Update StudentProgress
-                            # -------------------------
-                            db = get_session()
+                        try:
 
-                            try:
+                            progress = db.query(StudentProgress).filter_by(
+                                student_id=student_id,
+                                subject_id=subject_id,
+                                class_id=class_id,
+                                school_id=school_id_int,
+                                test_type="subjective"
+                            ).order_by(
+                                StudentProgress.created_at.desc()
+                            ).first()
 
-                                progress = db.query(StudentProgress).filter_by(
-                                    student_id=student_id,
+                            if progress:
+                                progress.submitted = True
+
+                                # 🚨 DO NOT LOCK HERE
+                                # Admin grading needs updates later
+                                progress.locked = False
+
+                                progress.review_status = "pending"
+                                progress.reviewed_at = None
+
+                            db.commit()
+
+                        except Exception as e:
+                            db.rollback()
+                            st.error(f"❌ Failed updating progress: {e}")
+
+                        finally:
+                            db.close()
+
+                        # -------------------------
+                        # Consume retake
+                        # -------------------------
+                        try:
+
+                            student_obj = db.query(Student).filter_by(
+                                access_code=access_code,
+                                school_id=school_id_int
+                            ).first()
+
+                            if student_obj:
+                                decrement_retake(
+                                    student_id=student_obj.id,
                                     subject_id=subject_id,
-                                    class_id=class_id,
                                     school_id=school_id_int,
                                     test_type="subjective"
-                                ).order_by(
-                                    StudentProgress.created_at.desc()
-                                ).first()
+                                )
 
-                                if progress:
-                                    progress.submitted = True
-                                    progress.locked = True
-                                    progress.review_status = "pending"
-                                    progress.reviewed_at = None
+                        except Exception as e:
+                            st.error(f"❌ Retake update failed: {e}")
 
-                                db.commit()
+                        # -------------------------
+                        # Reset session state
+                        # -------------------------
+                        st.session_state.show_submission_message = True
+                        st.session_state.answers = []
+                        st.session_state.copy_paste_count = 0
+                        st.session_state.current_q = 0
+                        st.session_state.submitted = True
 
-                            except Exception as e:
-                                db.rollback()
-                                st.error(f"❌ Failed updating subjective progress: {e}")
+                        st.success("✅ Subjective test submitted successfully.")
 
-                            finally:
-                                db.close()
-
-                            # -------------------------
-                            # Consume retake
-                            # -------------------------
-                            db = get_session()
-
-                            try:
-
-                                student_obj = db.query(Student).filter_by(
-                                    access_code=access_code,
-                                    school_id=school_id_int
-                                ).first()
-
-                                if student_obj:
-
-                                    decrement_retake(
-                                        student_id=student_obj.id,
-                                        subject_id=subject_id,
-                                        school_id=school_id_int,
-                                        test_type="subjective"
-                                    )
-
-                            except Exception as e:
-                                db.rollback()
-                                st.error(f"❌ Failed decrementing retake: {e}")
-
-                            finally:
-                                db.close()
-
-                            # -------------------------
-                            # Success UI
-                            # -------------------------
-                            st.session_state.show_submission_message = True
-
-                            # -------------------------
-                            # Reset session state
-                            # -------------------------
-                            st.session_state.test_started = False
-                            st.session_state.answers = []
-                            st.session_state.copy_paste_count = 0
-                            st.session_state.current_q_idx = 0
-                            st.session_state.submitted = True
-
-                            st.success("✅ Subjective test submitted successfully.")
-
-                            st.rerun()
+                        st.rerun()
 
                     except Exception as e:
                         st.error(f"❌ Subjective submission failed: {e}")
 
+                # =====================================================
+                # OBJECTIVE TEST SUBMISSION
+                # =====================================================
+                elif test_type == "objective":
+
+                    import json
+
+                    try:
+
+                        # -------------------------
+                        # Grade answers
+                        # -------------------------
+                        correct_count = 0
+                        details = []
+
+                        for q, ans in zip(
+                                st.session_state.questions,
+                                st.session_state.answers
+                        ):
+
+                            correct_answer = q.get("correct_answer", "")
+
+                            is_correct = (
+                                    str(ans).strip().lower()
+                                    ==
+                                    str(correct_answer).strip().lower()
+                            )
+
+                            if is_correct:
+                                correct_count += 1
+
+                            details.append({
+                                "question_id": q.get("id"),
+                                "question_text": q.get("text", "No question text"),
+                                "selected": ans or "—",
+                                "correct": correct_answer or "—",
+                                "is_correct": is_correct
+                            })
+
+                        total_questions = len(details)
+
+                        percent = (
+                            (correct_count / total_questions) * 100
+                            if total_questions else 0
+                        )
+
+                        # -------------------------
+                        # Save progress
+                        # -------------------------
+                        save_progress(
+                            access_code=access_code,
+                            student_id=student_id,
+                            subject_id=subject_id,
+                            class_id=class_id,
+                            answers=json.dumps(details),
+                            current_q=st.session_state.current_q,
+                            start_time=start_time_ts,
+                            duration=st.session_state.duration,
+                            questions=st.session_state.questions,
+                            school_id=school_id_int,
+                            test_type="objective",
+                            submitted=True
+                        )
+
+                        # -------------------------
+                        # Save results
+                        # -------------------------
+                        db = get_session()
+
+                        try:
+
+                            db.add(
+                                TestResult(
+                                    student_id=student_id,
+                                    class_id=class_id,
+                                    subject_id=subject_id,
+                                    score=correct_count,
+                                    total=total_questions,
+                                    percentage=percent,
+                                    school_id=school_id_int
+                                )
+                            )
+
+                            progress = db.query(StudentProgress).filter_by(
+                                student_id=student_id,
+                                subject_id=subject_id,
+                                class_id=class_id,
+                                school_id=school_id_int,
+                                test_type="objective"
+                            ).order_by(
+                                StudentProgress.created_at.desc()
+                            ).first()
+
+                            if progress:
+                                progress.score = correct_count
+                                progress.submitted = True
+                                progress.locked = True
+                                progress.review_status = "reviewed"
+                                progress.reviewed_at = datetime.utcnow()
+
+                            db.commit()
+
+                        except Exception as e:
+                            db.rollback()
+                            st.error(f"❌ Objective DB update failed: {e}")
+
+                        finally:
+                            db.close()
+
+                        # -------------------------
+                        # Reset session
+                        # -------------------------
+                        st.session_state.answers = []
+                        st.session_state.current_q = 0
+                        st.session_state.submitted = True
+
+                        st.success("✅ Objective test submitted successfully.")
+
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Objective submission failed: {e}")
 
                 # =========================
                 # OBJECTIVE TEST
@@ -1809,6 +1927,8 @@ def run_student_mode():
                                     ==
                                     str(correct_answer).strip().lower()
                             )
+
+
 
                             if is_correct:
                                 correct_count += 1

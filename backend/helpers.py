@@ -426,11 +426,27 @@ def handle_subjective_submission(
         # ---------------------------------
         # Normalize question IDs
         # ---------------------------------
-        question_ids = [
-            q.id if hasattr(q, "id") else int(q)
-            for q in questions
-        ]
+        question_ids = []
 
+        for q in questions:
+
+            # SQLAlchemy object
+            if hasattr(q, "id"):
+                question_ids.append(q.id)
+
+            # dictionary question
+            elif isinstance(q, dict):
+                qid = q.get("id")
+
+                if qid is not None:
+                    question_ids.append(qid)
+
+            # raw numeric/string id
+            else:
+                try:
+                    question_ids.append(int(q))
+                except:
+                    pass
         # ---------------------------------
         # Save answers
         # ---------------------------------
