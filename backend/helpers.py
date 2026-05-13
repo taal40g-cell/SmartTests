@@ -936,25 +936,39 @@ def save_answer(db, progress_id, question_id, answer):
     """
     Save or update a single answer for a test session.
     """
-    # Check if answer already exists
-    existing = db.query(StudentAnswer).filter_by(
-        progress_id=progress_id,
-        question_id=question_id
-    ).first()
 
-    if existing:
-        # Update the answer
-        existing.answer = answer
-        existing.created_at = datetime.utcnow()
-    else:
-        # Create a new row
-        new_answer = StudentAnswer(
+    try:
+
+        # Check if answer already exists
+        existing = db.query(StudentAnswer).filter_by(
             progress_id=progress_id,
-            question_id=question_id,
-            answer=answer
-        )
-        db.add(new_answer)
+            question_id=question_id
+        ).first()
 
-    db.commit()
+        if existing:
 
+            # Update existing answer
+            existing.answer = answer
+            existing.created_at = datetime.utcnow()
+
+        else:
+
+            # Create new answer
+            new_answer = StudentAnswer(
+                progress_id=progress_id,
+                question_id=question_id,
+                answer=answer
+            )
+
+            db.add(new_answer)
+
+        db.commit()
+
+    except Exception as e:
+
+        db.rollback()
+
+        print(f"save_answer error: {e}")
+
+        raise e
 
