@@ -215,31 +215,50 @@ def generate_pdf(
     details,
     school_name=None,
     school_id=None,
-    logo_path=None
+    logo_path=None,
+    test_type="objective"
 ):
     """
-    Generate a clean, structured test result PDF.
+    Generate a clean and structured PDF result.
+
+    Supports:
+    - objective tests
+    - subjective tests
     """
 
+    from io import BytesIO
+    from datetime import datetime
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Table, TableStyle
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+
     buffer = BytesIO()
+
     c = canvas.Canvas(buffer, pagesize=letter)
+
     width, height = letter
 
-    # =========================
+    # =====================================================
     # 🧠 HEADER SECTION
-    # =========================
+    # =====================================================
     y_top = height - 60
     center_x = width / 2
 
-    # -------------------------
-    # Logo (left side)
-    # -------------------------
+    # -----------------------------------------------------
+    # 🏫 LOGO
+    # -----------------------------------------------------
     logo_x = 60
     logo_y = y_top - 50
 
     if logo_path:
+
         try:
             logo = ImageReader(logo_path)
+
             c.drawImage(
                 logo,
                 logo_x,
@@ -249,146 +268,312 @@ def generate_pdf(
                 preserveAspectRatio=True,
                 mask='auto'
             )
+
         except Exception:
+
             c.setFont("Helvetica-Oblique", 9)
             c.drawString(logo_x, y_top - 20, "[Logo not found]")
+
     else:
+
         c.setFont("Helvetica-Oblique", 9)
         c.drawString(logo_x, y_top - 20, "[LOGO PLACEHOLDER]")
 
-    # -------------------------
-    # School Name
-    # -------------------------
+    # -----------------------------------------------------
+    # 🏫 SCHOOL NAME
+    # -----------------------------------------------------
     display_school = school_name or "SMART TEST SCHOOL"
 
-    c.setFont("Helvetica-Bold", 14)
+    c.setFont("Helvetica-Bold", 15)
     c.drawCentredString(center_x, y_top, display_school)
 
-    # -------------------------
-    # Title
-    # -------------------------
+    # -----------------------------------------------------
+    # 📄 TITLE
+    # -----------------------------------------------------
     c.setFont("Helvetica-Bold", 13)
-    c.drawCentredString(center_x, y_top - 18, "STUDENT TEST RESULT")
+    c.drawCentredString(center_x, y_top - 20, "STUDENT TEST RESULT")
 
-    # -------------------------
-    # Meta Line (School ID + Date)
-    # -------------------------
+    # -----------------------------------------------------
+    # 📅 META INFO
+    # -----------------------------------------------------
     c.setFont("Helvetica", 9)
-    meta_text = f"School ID: {school_id or 'N/A'}    Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    c.drawCentredString(center_x, y_top - 35, meta_text)
 
-    # -------------------------
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    meta_text = (
+        f"School ID: {school_id or 'N/A'}    "
+        f"Generated: {generated_at}"
+    )
+
+    c.drawCentredString(center_x, y_top - 38, meta_text)
+
+    # -----------------------------------------------------
     # Divider
-    # -------------------------
+    # -----------------------------------------------------
     c.setStrokeColorRGB(0.2, 0.6, 0.2)
-    c.line(60, y_top - 45, width - 60, y_top - 45)
 
-    # =========================
-    # 👤 STUDENT INFO SECTION
-    # =========================
-    y = y_top - 80
+    c.line(
+        60,
+        y_top - 48,
+        width - 60,
+        y_top - 48
+    )
+
+    # =====================================================
+    # 👤 STUDENT INFO
+    # =====================================================
+    y = y_top - 85
 
     c.setFont("Helvetica", 11)
+
     c.drawString(70, y, f"Student Name: {name}")
     y -= 18
-    c.drawString(70, y, f"Class: {class_name}")
+
+    c.drawString(70, y, f"Class: {class_name or 'N/A'}")
     y -= 18
+
     c.drawString(70, y, f"Subject: {subject}")
     y -= 18
-    c.drawString(70, y, f"Score: {correct}/{total} ({percent:.2f}%)")
 
+    c.drawString(
+        70,
+        y,
+        f"Test Type: {test_type.title()}"
+    )
+    y -= 18
+
+    score_label = (
+        "Score"
+        if test_type == "objective"
+        else "Total Score"
+    )
+
+    c.drawString(
+        70,
+        y,
+        f"{score_label}: {correct}/{total} ({percent:.2f}%)"
+    )
+
+    # -----------------------------------------------------
     # Divider
+    # -----------------------------------------------------
     y -= 15
+
     c.setStrokeColorRGB(0.2, 0.6, 0.2)
-    c.line(60, y, width - 60, y)
+
+    c.line(
+        60,
+        y,
+        width - 60,
+        y
+    )
+
     y -= 25
 
-    # =========================
+    # =====================================================
     # 📊 QUESTION BREAKDOWN
-    # =========================
+    # =====================================================
     c.setFont("Helvetica-Bold", 12)
+
     c.drawString(70, y, "Question Breakdown:")
-    y -= 15
 
-    data = [["#", "Question", "Your Answer", "Correct Answer", "Result"]]
-    for i, d in enumerate(details, start=1):
+    y -= 20
 
-        # ---------------------------------
-        # SAFE PARSE
-        # ---------------------------------
-        if isinstance(d, dict):
+    # =====================================================
+    # ✅ OBJECTIVE PDF
+    # =====================================================
+    if test_type == "objective":
 
-            question = (d.get("question_text") or "").strip()
+        data = [
+            ["#", "Question", "Your Answer", "Correct Answer", "Result"]
+        ]
 
-            your_answer = d.get("selected", "—")
+        for i, d in enumerate(details, start=1):
 
-            correct_answer = (
+            if isinstance(d, dict):
+
+                question = (
+                    d.get("question_text")
+                    or d.get("question")
+                    or ""
+                ).strip()
+
+                your_answer = (
+                    d.get("selected")
+                    or d.get("your_answer")
+                    or "—"
+                )
+
+                correct_answer = (
                     d.get("correct")
                     or d.get("correct_answer")
                     or "—"
+                )
+
+                is_correct = d.get("is_correct", False)
+
+            else:
+
+                question = str(d).strip()
+
+                your_answer = "—"
+
+                correct_answer = "—"
+
+                is_correct = False
+
+            short_q = (
+                question[:65] + "..."
+                if len(question) > 65
+                else question
             )
 
-            is_correct = d.get("is_correct", False)
+            result = (
+                "✔ Correct"
+                if is_correct
+                else "✘ Wrong"
+            )
 
-        else:
-            # fallback for raw string entries
-            question = str(d).strip()
+            data.append([
+                str(i),
+                short_q,
+                str(your_answer),
+                str(correct_answer),
+                result
+            ])
 
-            your_answer = "—"
-
-            correct_answer = "—"
-
-            is_correct = False
-
-        # ---------------------------------
-        # FORMAT
-        # ---------------------------------
-        short_q = (
-            question[:65] + "..."
-            if len(question) > 65
-            else question
+        table = Table(
+            data,
+            colWidths=[30, 220, 90, 90, 70]
         )
 
-        result = "✔ Correct" if is_correct else "✘ Wrong"
-        data.append([str(i), short_q, your_answer, correct_answer, result])
+    # =====================================================
+    # ✍️ SUBJECTIVE PDF
+    # =====================================================
+    else:
 
-    table = Table(data, colWidths=[30, 220, 90, 90, 70])
+        data = [
+            ["#", "Question", "Student Answer", "Teacher Score"]
+        ]
 
+        for i, d in enumerate(details, start=1):
+
+            if isinstance(d, dict):
+
+                question = (
+                    d.get("question")
+                    or d.get("question_text")
+                    or f"Question {i}"
+                )
+
+                student_answer = (
+                    d.get("answer")
+                    or d.get("selected")
+                    or "No Answer"
+                )
+
+                teacher_score = (
+                    d.get("teacher_score")
+                    or d.get("score")
+                    or "Not Graded"
+                )
+
+            else:
+
+                question = f"Question {i}"
+
+                student_answer = str(d)
+
+                teacher_score = "Not Graded"
+
+            short_q = (
+                question[:60] + "..."
+                if len(question) > 60
+                else question
+            )
+
+            short_answer = (
+                str(student_answer)[:80] + "..."
+                if len(str(student_answer)) > 80
+                else str(student_answer)
+            )
+
+            data.append([
+                str(i),
+                short_q,
+                short_answer,
+                str(teacher_score)
+            ])
+
+        table = Table(
+            data,
+            colWidths=[30, 200, 250, 70]
+        )
+
+    # =====================================================
+    # 🎨 TABLE STYLE
+    # =====================================================
     table.setStyle(TableStyle([
+
+        # Header
         ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
 
+        # Body
         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
 
+        # Alignment
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
 
+        # Grid
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+
+        # Padding
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+
     ]))
 
     table.wrapOn(c, width - 120, height)
-    table.drawOn(c, 60, y - (len(data) * 18))
 
-    # =========================
+    table_height = len(data) * 18
+
+    table.drawOn(
+        c,
+        60,
+        y - table_height
+    )
+
+    # =====================================================
     # 📄 FOOTER
-    # =========================
+    # =====================================================
     c.setFont("Helvetica-Oblique", 9)
+
     c.setFillColorRGB(0.3, 0.3, 0.3)
-    c.drawCentredString(width / 2, 30, "Generated by Smart Test App © 2025")
+
+    c.drawCentredString(
+        width / 2,
+        30,
+        "Generated by Smart Test App © 2025"
+    )
+
     c.setFillColorRGB(0, 0, 0)
 
-    # =========================
-    # FINALIZE
-    # =========================
+    # =====================================================
+    # ✅ FINALIZE
+    # =====================================================
     c.showPage()
+
     c.save()
 
     buffer.seek(0)
-    return buffer.getvalue()
 
+    return buffer.getvalue()
 
 
 

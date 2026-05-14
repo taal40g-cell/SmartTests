@@ -1775,80 +1775,82 @@ def run_admin_mode():
     # =====================================================
     # ✍️ Review Subjective Questions (FIXED + STABLE)
     # =====================================================
+    # =====================================================
+    # ✍️ Review Subjective Questions
+    # FINAL STABLE VERSION
+    # =====================================================
+
     elif selected_tab == "✍️ Review Subj Questions":
 
         import json
         from datetime import datetime
-        from sqlalchemy import text
+        from sqlalchemy import or_, text
 
         st.subheader("📋 Subjective Grading Dashboard")
 
-        # ---------------------------------
-        # 🏫 SCHOOL CONTEXT
-        # ---------------------------------
         school_id = st.session_state.get("school_id")
 
         if not school_id:
-            st.error("🚫 No school selected.")
+            st.error("🚫 No school selected")
             st.stop()
 
-        # ---------------------------------
-        # 🔧 SAFE JSON PARSER
-        # ---------------------------------
+        status_filter = st.selectbox(
+            "Show submissions",
+            [
+                "Pending Review",
+                "Reviewed",
+                "All"
+            ]
+        )
+
         def parse_json_field(data):
+
             if not data:
                 return []
+
             if isinstance(data, list):
                 return data
+
             if isinstance(data, str):
                 try:
                     return json.loads(data)
                 except:
                     return []
-            return []
 
-        # ---------------------------------
-        # 🎛️ FILTER
-        # ---------------------------------
-        status_filter = st.selectbox(
-            "Show submissions",
-            ["Pending Review", "Reviewed", "All"],
-            index=0
-        )
+            return []
 
         db = get_session()
 
         try:
-            # ---------------------------------
-            # 🔥 ENSURE COLUMN EXISTS (SAFE)
-            # ---------------------------------
+
+            # -------------------------
+            # SAFE COLUMN CHECK
+            # -------------------------
+
             try:
+
                 db.execute(text("""
-                    ALTER TABLE student_progress
-                    ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'pending'
+                ALTER TABLE student_progress
+                ADD COLUMN IF NOT EXISTS review_status TEXT
                 """))
 
                 db.commit()
 
-            except Exception as e:
-
+            except:
                 db.rollback()
 
-                st.warning(f"review_status migration skipped: {e}")
+            # -------------------------
+            # QUERY
+            # -------------------------
 
-
-            # ---------------------------------
-            # 📦 QUERY
-            # ---------------------------------
             query = db.query(StudentProgress).filter(
                 StudentProgress.school_id == school_id,
                 StudentProgress.test_type == "subjective",
                 StudentProgress.submitted == True
             )
 
-            from sqlalchemy import or_
-
             if status_filter == "Pending Review":
+
                 query = query.filter(
                     or_(
                         StudentProgress.review_status.is_(None),
@@ -1857,224 +1859,281 @@ def run_admin_mode():
                 )
 
             elif status_filter == "Reviewed":
-                query = query.filter(StudentProgress.review_status == "reviewed")
+
+                query = query.filter(
+                    StudentProgress.review_status == "reviewed"
+                )
 
             submissions = query.order_by(
                 StudentProgress.created_at.desc()
             ).all()
 
             if not submissions:
-                st.info("No subjective submissions found.")
+                st.info("No submissions found")
                 st.stop()
 
-            # ---------------------------------
-            # 🧾 RENDER SUBMISSIONS
-            # ---------------------------------
+            # =================================================
+            # RENDER EACH SUBMISSION
+            # =================================================
+
             for sub in submissions:
 
-                student_name = getattr(sub.student, "name", f"Student {sub.student_id}")
-                subject_name = getattr(sub.subject, "name", "Unknown Subject")
+                student_name = getattr(
+                    sub.student,
+                    "name",
+                    f"Student {sub.student_id}"
+                )
 
-                review_status = getattr(sub, "review_status", "pending") or "pending"
-                is_reviewed = review_status == "reviewed"
+                subject_name = getattr(
+                    sub.subject,
+                    "name",
+                    "Unknown"
+                )
 
-                status_icon = "🟡 Pending" if not is_reviewed else "✅ Reviewed"
+                review_status = (
+                        sub.review_status or "pending"
+                )
+
+                is_reviewed = (
+                        review_status == "reviewed"
+                )
+
+                icon = (
+                    "✅ Reviewed"
+                    if is_reviewed
+                    else "🟡 Pending"
+                )
 
                 with st.expander(
-                        f"{status_icon} | 👤 {student_name} | 📘 {subject_name}",
+                        f"{icon} | 👤 {student_name} | 📘 {subject_name}",
                         expanded=not is_reviewed
                 ):
 
-                    st.write("DEBUG review_status:", review_status)
-                    st.write("DEBUG is_reviewed:", is_reviewed)
+                    answers = parse_json_field(
+                        sub.answers
+                    )
 
-                    st.markdown("### 📄 Student Answers")
+                    attachments = parse_json_field(
+                        sub.attachments
+                    )
 
-                    answers = parse_json_field(sub.answers)
-                    attachments = parse_json_field(sub.attachments)
+                    st.markdown(
+                        "### 📄 Student Answers"
+                    )
 
                     scores = {}
 
-                    # ---------------------------------
-                    # ❌ NO ANSWERS
-                    # ---------------------------------
                     if not answers:
-                        st.write("_No answers submitted_")
 
-                    # ---------------------------------
-                    # ✅ ANSWERS
-                    # ---------------------------------
+                        st.write(
+                            "_No answers submitted_"
+                        )
+
                     else:
 
-                        for idx, item in enumerate(answers, start=1):
+                        for idx, item in enumerate(
+                                answers,
+                                start=1
+                        ):
 
                             question = (
-                                item.get("question", f"Question {idx}")
+                                item.get(
+                                    "question",
+                                    f"Question {idx}"
+                                )
                                 if isinstance(item, dict)
                                 else f"Question {idx}"
                             )
 
                             answer = (
-                                item.get("answer", "")
+                                item.get(
+                                    "answer",
+                                    ""
+                                )
                                 if isinstance(item, dict)
                                 else str(item)
                             )
 
-                            col1, col2, col3 = st.columns([3, 5, 2])
+                            col1, col2, col3 = st.columns(
+                                [3, 5, 2]
+                            )
 
-                            # -----------------------------
-                            # QUESTION
-                            # -----------------------------
                             with col1:
-                                st.markdown(f"**Q{idx}: {question}**")
 
-                            # -----------------------------
-                            # ANSWER
-                            # -----------------------------
+                                st.markdown(
+                                    f"**Q{idx}:** {question}"
+                                )
+
                             with col2:
-                                st.markdown(answer or "_No answer submitted_")
 
-                            # -----------------------------
-                            # SCORE
-                            # -----------------------------
+                                st.markdown(
+                                    answer
+                                    or "_No answer_"
+                                )
+
                             with col3:
+
                                 slider_key = f"score_{sub.id}_{idx}"
+
+                                existing_score = 0
+
+                                if (
+                                        is_reviewed
+                                        and sub.score
+                                ):
+                                    total_q = len(answers)
+
+                                    existing_score = (
+                                        int(
+                                            sub.score /
+                                            total_q
+                                        )
+                                    )
 
                                 score = st.slider(
                                     f"Score Q{idx}",
-                                    min_value=0,
-                                    max_value=100,
+                                    0,
+                                    100,
+                                    value=existing_score,
                                     key=slider_key,
                                     disabled=is_reviewed
                                 )
 
                                 scores[idx] = score
+
                             st.markdown("---")
 
-                    # ---------------------------------
-                    # 📎 ATTACHMENTS
-                    # ---------------------------------
+                    # -------------------------
+                    # ATTACHMENTS
+                    # -------------------------
+
                     if attachments:
 
-                        st.markdown("### 📎 Attachments")
-
-                        # ensure safe structure
-                        if isinstance(attachments, str):
-                            try:
-                                import json
-                                attachments = json.loads(attachments)
-                            except Exception:
-                                attachments = [attachments]
-
-                        if not isinstance(attachments, list):
-                            attachments = [attachments]
+                        st.markdown(
+                            "### 📎 Attachments"
+                        )
 
                         for file in attachments:
 
-                            if isinstance(file, dict):
-                                st.write(file.get("name", file))
-                            else:
-                                st.write(str(file))
-                    # ---------------------------------
-                    # ✅ SUBMIT REVIEW
-                    # ---------------------------------
-                    st.write("DEBUG button disabled:", is_reviewed)
+                            if isinstance(
+                                    file,
+                                    dict
+                            ):
 
-                    submit_clicked = st.button(
-                        f"✅ Submit Review for {student_name}",
-                        key=f"submit_review_{sub.id}_{school_id}",
-                        disabled=is_reviewed
-                    )
-
-                    # ---------------------------------
-                    # 💾 SAVE REVIEW
-                    # ---------------------------------
-                    if submit_clicked:
-
-                        try:
-
-                            total_score = sum(scores.values())
-
-                            total_questions = len(answers)
-
-                            max_score = total_questions * 100
-
-                            percent = (
-                                (total_score / max_score) * 100
-                                if max_score else 0
-                            )
-
-                            # -----------------------------
-                            # UPDATE PROGRESS
-                            # -----------------------------
-                            sub.score = total_score
-                            sub.review_status = "reviewed"
-                            sub.reviewed_at = datetime.utcnow()
-                            sub.locked = True
-
-                            # -----------------------------
-                            # SAVE RESULT
-                            # -----------------------------
-                            from backend.models import TestResult
-
-                            existing_result = db.query(TestResult).filter_by(
-                                student_id=sub.student_id,
-                                subject_id=sub.subject_id,
-                                school_id=sub.school_id,
-                                class_id=sub.class_id
-                            ).first()
-
-                            if not existing_result:
-
-                                db.add(
-                                    TestResult(
-                                        student_id=sub.student_id,
-                                        class_id=sub.class_id,
-                                        subject_id=sub.subject_id,
-                                        score=total_score,
-                                        total=max_score,
-                                        percentage=percent,
-                                        school_id=sub.school_id
+                                st.write(
+                                    file.get(
+                                        "name",
+                                        str(file)
                                     )
                                 )
 
                             else:
 
-                                existing_result.score = total_score
-                                existing_result.total = max_score
-                                existing_result.percentage = percent
-
-                            db.commit()
-
-                            # -----------------------------
-                            # CLEAN SESSION
-                            # -----------------------------
-                            for idx in range(1, len(answers) + 1):
-                                st.session_state.pop(
-                                    f"score_{sub.id}_{idx}",
-                                    None
+                                st.write(
+                                    str(file)
                                 )
 
-                            st.success(
-                                f"✅ Review saved for {student_name}"
+                    # -------------------------
+                    # REVIEWED VIEW
+                    # -------------------------
+
+                    if is_reviewed:
+                        st.success(
+                            f"""
+    Final Score:
+    {sub.score}
+
+    Reviewed:
+    {sub.reviewed_at}
+    """
+                        )
+
+                    # -------------------------
+                    # SUBMIT
+                    # -------------------------
+
+                    submit_clicked = st.button(
+                        f"✅ Submit Review for {student_name}",
+                        key=f"submit_{sub.id}",
+                        disabled=is_reviewed
+                    )
+
+                    if submit_clicked:
+
+                        total_score = sum(
+                            scores.values()
+                        )
+
+                        total_questions = len(
+                            answers
+                        )
+
+                        max_score = (
+                                total_questions * 100
+                        )
+
+                        percent = (
+                                (
+                                        total_score
+                                        / max_score
+                                ) * 100
+                        )
+
+                        sub.score = total_score
+
+                        sub.review_status = (
+                            "reviewed"
+                        )
+
+                        sub.reviewed_at = (
+                            datetime.utcnow()
+                        )
+
+                        sub.locked = True
+
+                        from backend.models import TestResult
+
+                        existing = db.query(
+                            TestResult
+                        ).filter_by(
+                            student_id=sub.student_id,
+                            subject_id=sub.subject_id,
+                            class_id=sub.class_id,
+                            school_id=sub.school_id
+                        ).first()
+
+                        if existing:
+
+                            # 🔒 NO UPDATE
+                            st.warning(
+                                "Already finalized"
                             )
 
-                            st.rerun()
+                        else:
 
-                        except Exception as e:
-
-                            db.rollback()  # ← critical fix
-
-                            st.error(
-                                f"❌ Review save failed: {e}"
+                            db.add(
+                                TestResult(
+                                    student_id=sub.student_id,
+                                    class_id=sub.class_id,
+                                    subject_id=sub.subject_id,
+                                    score=total_score,
+                                    total=max_score,
+                                    percentage=percent,
+                                    school_id=sub.school_id
+                                )
                             )
 
-                        st.success(f"✅ Review saved for {student_name}")
+                        db.commit()
+
+                        st.success(
+                            "Review submitted"
+                        )
 
                         st.rerun()
-        finally:
-            db.close()
 
+        finally:
+
+            db.close()
 
 
     # =====================================================
