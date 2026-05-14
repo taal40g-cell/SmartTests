@@ -1823,12 +1823,18 @@ def run_admin_mode():
             # 🔥 ENSURE COLUMN EXISTS (SAFE)
             # ---------------------------------
             try:
-                db.execute(text(
-                    "ALTER TABLE student_progress ADD COLUMN review_status TEXT DEFAULT 'pending'"
-                ))
+                db.execute(text("""
+                    ALTER TABLE student_progress
+                    ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'pending'
+                """))
+
                 db.commit()
-            except:
-                pass  # already exists
+
+            except Exception as e:
+
+                db.rollback()
+
+                st.warning(f"review_status migration skipped: {e}")
 
 
             # ---------------------------------
@@ -1985,66 +1991,82 @@ def run_admin_mode():
                     # ---------------------------------
                     if submit_clicked:
 
-                        total_score = sum(scores.values())
+                        try:
 
-                        total_questions = len(answers)
+                            total_score = sum(scores.values())
 
-                        max_score = total_questions * 100
+                            total_questions = len(answers)
 
-                        percent = (
-                            (total_score / max_score) * 100
-                            if max_score else 0
-                        )
+                            max_score = total_questions * 100
 
-                        # -----------------------------
-                        # UPDATE PROGRESS
-                        # -----------------------------
-                        sub.score = total_score
-                        sub.review_status = "reviewed"
-                        sub.reviewed_at = datetime.utcnow()
-                        sub.locked = True
-
-                        # -----------------------------
-                        # SAVE RESULT
-                        # -----------------------------
-                        from backend.models import TestResult
-
-                        existing_result = db.query(TestResult).filter_by(
-                            student_id=sub.student_id,
-                            subject_id=sub.subject_id,
-                            school_id=sub.school_id,
-                            class_id=sub.class_id
-                        ).first()
-
-                        if not existing_result:
-
-                            db.add(
-                                TestResult(
-                                    student_id=sub.student_id,
-                                    class_id=sub.class_id,
-                                    subject_id=sub.subject_id,
-                                    score=total_score,
-                                    total=max_score,
-                                    percentage=percent,
-                                    school_id=sub.school_id
-                                )
+                            percent = (
+                                (total_score / max_score) * 100
+                                if max_score else 0
                             )
 
-                        else:
+                            # -----------------------------
+                            # UPDATE PROGRESS
+                            # -----------------------------
+                            sub.score = total_score
+                            sub.review_status = "reviewed"
+                            sub.reviewed_at = datetime.utcnow()
+                            sub.locked = True
 
-                            existing_result.score = total_score
-                            existing_result.total = max_score
-                            existing_result.percentage = percent
+                            # -----------------------------
+                            # SAVE RESULT
+                            # -----------------------------
+                            from backend.models import TestResult
 
-                        db.commit()
+                            existing_result = db.query(TestResult).filter_by(
+                                student_id=sub.student_id,
+                                subject_id=sub.subject_id,
+                                school_id=sub.school_id,
+                                class_id=sub.class_id
+                            ).first()
 
-                        # -----------------------------
-                        # CLEAN SESSION
-                        # -----------------------------
-                        for idx in range(1, len(answers) + 1):
-                            st.session_state.pop(
-                                f"score_state_{sub.id}_{idx}",
-                                None
+                            if not existing_result:
+
+                                db.add(
+                                    TestResult(
+                                        student_id=sub.student_id,
+                                        class_id=sub.class_id,
+                                        subject_id=sub.subject_id,
+                                        score=total_score,
+                                        total=max_score,
+                                        percentage=percent,
+                                        school_id=sub.school_id
+                                    )
+                                )
+
+                            else:
+
+                                existing_result.score = total_score
+                                existing_result.total = max_score
+                                existing_result.percentage = percent
+
+                            db.commit()
+
+                            # -----------------------------
+                            # CLEAN SESSION
+                            # -----------------------------
+                            for idx in range(1, len(answers) + 1):
+                                st.session_state.pop(
+                                    f"score_{sub.id}_{idx}",
+                                    None
+                                )
+
+                            st.success(
+                                f"✅ Review saved for {student_name}"
+                            )
+
+                            st.rerun()
+
+                        except Exception as e:
+
+                            db.rollback()  # ← critical fix
+
+                            st.error(
+                                f"❌ Review save failed: {e}"
                             )
 
                         st.success(f"✅ Review saved for {student_name}")
