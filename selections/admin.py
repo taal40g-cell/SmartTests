@@ -1875,7 +1875,81 @@ def run_admin_mode():
             # =================================================
             # RENDER EACH SUBMISSION
             # =================================================
+            # ---------------------------------
+            # 🔍 SEARCH + FILTER UI
+            # ---------------------------------
 
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                student_search = st.text_input(
+                    "🔍 Search Student"
+                )
+
+            with col2:
+                subject_filter = st.selectbox(
+                    "Subject",
+                    ["All"] + sorted(
+                        list({
+                            getattr(
+                                s.subject,
+                                "name",
+                                "Unknown"
+                            )
+                            for s in submissions
+                        })
+                    )
+                )
+
+            # ---------------------------------
+            # APPLY FILTERS
+            # ---------------------------------
+
+            filtered_submissions = []
+
+            for sub in submissions:
+
+                student_name = getattr(
+                    sub.student,
+                    "name",
+                    ""
+                )
+
+                subject_name = getattr(
+                    sub.subject,
+                    "name",
+                    "Unknown"
+                )
+
+                matches_student = (
+                        student_search.lower()
+                        in student_name.lower()
+                )
+
+                matches_subject = (
+
+                        subject_filter == "All"
+
+                        or
+
+                        subject_name == subject_filter
+                )
+
+                if (
+                        matches_student
+                        and
+                        matches_subject
+                ):
+                    filtered_submissions.append(
+                        sub
+                    )
+
+            if not filtered_submissions:
+                st.warning(
+                    "No matching records"
+                )
+
+                st.stop()
             for sub in submissions:
 
                 student_name = getattr(
