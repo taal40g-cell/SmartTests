@@ -31,94 +31,220 @@ def get_base64_image(file_path: str) -> str:
 
 
 
-def set_background(file_path: str = None, color: str = "#7abaa1", force_reload: bool = False):
+def set_background(
+    file_path: str = None,
+    color: str = "#7abaa1",
+    force_reload: bool = False
+):
     """
-    Sets a Streamlit app background using a shared image for both
-    main page and sidebar, with a soft translucent overlay for readability.
+    Sets Streamlit background image for app + sidebar.
+    Mobile-safe version.
     """
+
     base64_image = None
 
     if file_path and os.path.exists(file_path):
-        # Optionally clear cache
+
         if force_reload:
             try:
                 st.cache_data.clear()
-            except AttributeError:
+            except:
                 pass
 
         try:
             base64_image = get_base64_image(file_path)
+
         except Exception as e:
-            st.warning(f"⚠️ Failed to load background image: {e}. Using color background instead.")
+
+            st.warning(
+                f"⚠️ Failed loading background: {e}"
+            )
+
             base64_image = None
+
     else:
         base64_image = None
 
+
+    # ==================================================
+    # IMAGE BACKGROUND
+    # ==================================================
     if base64_image:
+
         st.markdown(
             f"""
             <style>
-            /* 🌄 Main background */
+
+            /* ==============================
+               MAIN APP BACKGROUND
+            ============================== */
+
             .stApp {{
-                background: url("data:image/png;base64,{base64_image}") center/cover no-repeat fixed;
-                background-attachment: fixed;
-                background-position: center;
+
+                background-image:
+                    linear-gradient(
+                        rgba(255,255,255,.08),
+                        rgba(255,255,255,.08)
+                    ),
+                    url("data:image/png;base64,{base64_image}");
+
+                background-size:cover !important;
+
+                background-repeat:no-repeat !important;
+
+                background-position:center center !important;
+
+                /* FIX FOR MOBILE */
+                background-attachment:scroll !important;
+
+                min-height:100vh;
             }}
 
-            /* 🌄 Sidebar uses same background image with a light frosted overlay */
+
+            /* ==============================
+               SIDEBAR
+            ============================== */
+
             section[data-testid="stSidebar"] > div:first-child {{
-                background: 
-                    linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.9)),
-                    url("data:image/png;base64,{base64_image}") center/cover no-repeat fixed !important;
-                color: #0f3c2e !important;
-                backdrop-filter: blur(6px);
+
+                background-image:
+                    linear-gradient(
+                        rgba(255,255,255,.88),
+                        rgba(255,255,255,.92)
+                    ),
+                    url("data:image/png;base64,{base64_image}");
+
+                background-size:cover !important;
+
+                background-repeat:no-repeat !important;
+
+                background-position:center center !important;
+
+                background-attachment:scroll !important;
+
+                color:#0f3c2e !important;
+
             }}
 
-            /* Sidebar titles/text */
+
+            /* ==============================
+               SIDEBAR TEXT
+            ============================== */
+
             section[data-testid="stSidebar"] h1,
             section[data-testid="stSidebar"] h2,
             section[data-testid="stSidebar"] h3,
             section[data-testid="stSidebar"] p,
-            section[data-testid="stSidebar"] span {{
-                color: #0f3c2e !important;
-                font-weight: 500;
+            section[data-testid="stSidebar"] span,
+            section[data-testid="stSidebar"] label {{
+
+                color:#0f3c2e !important;
+
+                font-weight:500;
             }}
 
-            /* Sidebar buttons (soft mint style on image) */
+
+            /* ==============================
+               SIDEBAR BUTTONS
+            ============================== */
+
             .stSidebar button {{
-                background: linear-gradient(145deg, #9edbbb, #7bc8a2) !important;
-                color: #fff !important;
-                border: none !important;
-                border-radius: 10px !important;
-                transition: 0.3s ease-in-out;
-                margin-bottom: 6px;
+
+                background:
+                    linear-gradient(
+                        145deg,
+                        #9edbbb,
+                        #7bc8a2
+                    ) !important;
+
+                color:white !important;
+
+                border:none !important;
+
+                border-radius:10px !important;
+
+                margin-bottom:6px;
+
+                transition:.3s;
             }}
+
             .stSidebar button:hover {{
-                transform: translateY(-2px);
-                background: linear-gradient(145deg, #7bc8a2, #9edbbb) !important;
+
+                transform:translateY(-2px);
+
+                background:
+                    linear-gradient(
+                        145deg,
+                        #7bc8a2,
+                        #9edbbb
+                    ) !important;
             }}
+
+
+            /* ==============================
+               MOBILE FIX
+            ============================== */
+
+            @media(max-width:768px){{
+
+                .stApp,
+                section[data-testid="stSidebar"] > div:first-child {{
+
+                    background-size:cover !important;
+
+                    background-position:center top !important;
+
+                    background-attachment:scroll !important;
+
+                }}
+
+            }}
+
             </style>
             """,
             unsafe_allow_html=True
         )
+
+    # ==================================================
+    # FALLBACK
+    # ==================================================
     else:
-        # Fallback: gradient color background
+
         st.markdown(
             f"""
             <style>
+
             .stApp {{
-                background: linear-gradient(135deg, {color}, #9ed3b8);
-                color: #222 !important;
+
+                background:
+                linear-gradient(
+                    135deg,
+                    {color},
+                    #9ed3b8
+                );
+
+                color:#222 !important;
+
+                min-height:100vh;
             }}
+
             section[data-testid="stSidebar"] {{
-                background: linear-gradient(135deg, {color}, #94c7ad);
-                color: #fff !important;
+
+                background:
+                linear-gradient(
+                    135deg,
+                    {color},
+                    #94c7ad
+                );
+
+                color:white !important;
+
             }}
+
             </style>
             """,
             unsafe_allow_html=True
         )
-
 
 def render_test(questions, subject):
     """Render a stable one-question-per-page test with synced pagination."""
@@ -199,6 +325,7 @@ def render_test(questions, subject):
             if st.button("✅ Submit Test", key="submit_btn_final"):
                 st.session_state.submitted = True
                 st.rerun()
+
 
 
 
@@ -574,6 +701,8 @@ def generate_pdf(
     buffer.seek(0)
 
     return buffer.getvalue()
+
+
 
 
 

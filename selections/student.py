@@ -1787,9 +1787,6 @@ def run_student_mode():
 
                     import json
 
-                    # -------------------------
-                    # SINGLE DB SESSION
-                    # -------------------------
                     db = get_session()
 
                     try:
@@ -1805,10 +1802,23 @@ def run_student_mode():
                                 st.session_state.answers
                         ):
 
-                            correct_answer = q.get("correct_answer", "")
+                            # FIX: extract answer if dict
+                            if isinstance(ans, dict):
+                                selected_answer = (
+                                        ans.get("selected")
+                                        or ans.get("answer")
+                                        or ""
+                                )
+                            else:
+                                selected_answer = str(ans)
+
+                            correct_answer = q.get(
+                                "correct_answer",
+                                ""
+                            )
 
                             is_correct = (
-                                    str(ans).strip().lower()
+                                    selected_answer.strip().lower()
                                     ==
                                     str(correct_answer).strip().lower()
                             )
@@ -1818,8 +1828,11 @@ def run_student_mode():
 
                             details.append({
                                 "question_id": q.get("id"),
-                                "question_text": q.get("text", "No question text"),
-                                "selected": ans or "—",
+                                "question_text": q.get(
+                                    "text",
+                                    "No question text"
+                                ),
+                                "selected": selected_answer or "—",
                                 "correct": correct_answer or "—",
                                 "is_correct": is_correct
                             })
@@ -1828,13 +1841,16 @@ def run_student_mode():
 
                         percent = (
                             (correct_count / total_questions) * 100
-                            if total_questions else 0
+                            if total_questions
+                            else 0
                         )
 
                         # -------------------------
-                        # Get latest progress
+                        # Progress
                         # -------------------------
-                        progress = db.query(StudentProgress).filter_by(
+                        progress = db.query(
+                            StudentProgress
+                        ).filter_by(
                             student_id=student_id,
                             subject_id=subject_id,
                             class_id=class_id,
@@ -1844,31 +1860,34 @@ def run_student_mode():
                             StudentProgress.created_at.desc()
                         ).first()
 
-                        # -------------------------
-                        # Update progress safely
-                        # -------------------------
                         if progress:
-                            progress.answers = json.dumps(details)
+                            progress.answers = json.dumps(
+                                details
+                            )
 
-                            progress.current_q = st.session_state.current_q
+                            progress.current_q = (
+                                st.session_state.current_q
+                            )
 
-                            progress.start_time = start_time_ts
+                            progress.start_time = (
+                                start_time_ts
+                            )
 
-                            progress.duration = st.session_state.duration
+                            progress.duration = (
+                                st.session_state.duration
+                            )
 
-                            # ✅ IMPORTANT FIX
                             progress.questions = json.dumps(
-                                [q["id"] for q in st.session_state.questions]
+                                [
+                                    q["id"]
+                                    for q in st.session_state.questions
+                                ]
                             )
 
                             progress.score = correct_count
-
                             progress.submitted = True
-
                             progress.locked = True
-
                             progress.review_status = "reviewed"
-
                             progress.reviewed_at = datetime.utcnow()
 
                         # -------------------------
@@ -1881,14 +1900,29 @@ def run_student_mode():
                                     st.session_state.answers
                             ):
 
-                                existing = db.query(StudentAnswer).filter_by(
+                                # FIX HERE
+                                if isinstance(ans, dict):
+
+                                    clean_answer = (
+                                            ans.get("selected")
+                                            or ans.get("answer")
+                                            or ""
+                                    )
+
+                                else:
+
+                                    clean_answer = str(ans)
+
+                                existing = db.query(
+                                    StudentAnswer
+                                ).filter_by(
                                     progress_id=progress.id,
                                     question_id=q["id"]
                                 ).first()
 
                                 if existing:
 
-                                    existing.answer = ans
+                                    existing.answer = clean_answer
 
                                 else:
 
@@ -1896,12 +1930,12 @@ def run_student_mode():
                                         StudentAnswer(
                                             progress_id=progress.id,
                                             question_id=q["id"],
-                                            answer=ans
+                                            answer=clean_answer
                                         )
                                     )
 
                         # -------------------------
-                        # Save Test Result
+                        # Save Result
                         # -------------------------
                         db.add(
                             TestResult(
@@ -1915,186 +1949,137 @@ def run_student_mode():
                             )
                         )
 
-                        # -------------------------
-                        # FINAL COMMIT
-                        # -------------------------
                         db.commit()
 
-                        # -------------------------
-                        # Reset session
-                        # -------------------------
-                        st.session_state.answers = []
-                        st.session_state.current_q = 0
+                        # Save PDF state
+                        st.session_state.pdf_ready = True
+
+                        st.session_state.pdf_data = {
+
+                            "correct": correct_count,
+                            "total": total_questions,
+                            "percent": percent,
+                            "details": details
+
+                        }
+
                         st.session_state.submitted = True
                         st.session_state.test_started = False
 
-                        st.success("✅ Objective test submitted successfully.")
-
-                        st.rerun()
+                        st.success(
+                            "✅ Objective test submitted successfully."
+                        )
 
                     except Exception as e:
 
                         db.rollback()
 
-                        st.error(f"❌ Objective submission failed: {e}")
+                        st.error(
+                            f"❌ Objective submission failed: {e}"
+                        )
 
                     finally:
 
                         db.close()
-                # =========================
-                # OBJECTIVE TEST
-                # =========================
-                else:
 
-                    import json
+                # =====================================================
+                # PERSISTENT PDF
+                # =====================================================
+                if st.session_state.get("pdf_ready"):
 
-                    try:
+                    data = st.session_state.pdf_data
 
+                    if data["percent"] >= 80:
 
-                        # -------------------------
-                        # Grade answers
-                        # -------------------------
-                        correct_count = 0
-                        details = []
-
-                        for q, ans in zip(st.session_state.questions, st.session_state.answers):
-
-                            correct_answer = q.get("correct_answer", "")
-
-                            is_correct = (
-                                    str(ans).strip().lower()
-                                    ==
-                                    str(correct_answer).strip().lower()
-                            )
-
-
-
-                            if is_correct:
-                                correct_count += 1
-
-                            details.append({
-                                "question_id": q.get("id"),
-                                "question_text": q.get("text", "No question text"),
-                                "selected": ans or "—",
-                                "correct": correct_answer or "—",
-                                "is_correct": is_correct
-                            })
-
-                        total_questions = len(details)
-
-                        percent = (
-                            (correct_count / total_questions) * 100
-                            if total_questions else 0
+                        st.balloons()
+                        st.success(
+                            "🏆 Excellent Performance!"
                         )
 
-                        # -------------------------
-                        # Save progress
-                        # -------------------------
-                        save_progress(
-                            access_code=access_code,
+                    elif data["percent"] >= 50:
+
+                        st.success(
+                            "👍 Good Job!"
+                        )
+
+                    else:
+
+                        st.warning(
+                            "📘 Keep Practicing."
+                        )
+
+                    st.divider()
+
+                    pdf_test_type = st.session_state.get(
+                        "test_type",
+                        "objective"
+                    )
+
+                    pdf_data = data["details"]
+
+                    # Subjective uses teacher-reviewed answers
+                    if pdf_test_type == "subjective":
+
+                        progress = get_session().query(
+                            StudentProgress
+                        ).filter_by(
                             student_id=student_id,
                             subject_id=subject_id,
                             class_id=class_id,
-                            answers=json.dumps(details),
-                            current_q=st.session_state.current_q,
-                            start_time=start_time_ts,
-                            duration=st.session_state.duration,
-                            questions=st.session_state.questions,
                             school_id=school_id_int,
-                            test_type="objective",
-                            submitted=True
-                        )
+                            test_type="test_type"
+                        ).order_by(
+                            StudentProgress.created_at.desc()
+                        ).first()
 
-                        # -------------------------
-                        # Save result
-                        # -------------------------
-                        db = get_session()
+                        if progress:
 
-                        try:
-
-                            db.add(
-                                TestResult(
-                                    student_id=student_id,
-                                    class_id=class_id,
-                                    subject_id=subject_id,
-                                    score=correct_count,
-                                    total=total_questions,
-                                    percentage=percent,
-                                    school_id=school_id_int
+                            try:
+                                pdf_data = json.loads(
+                                    progress.answers
                                 )
-                            )
 
-                            progress = db.query(StudentProgress).filter_by(
-                                student_id=student_id,
-                                subject_id=subject_id,
-                                class_id=class_id,
-                                school_id=school_id_int,
-                                test_type="objective"
-                            ).order_by(
-                                StudentProgress.created_at.desc()
-                            ).first()
+                            except:
+                                pdf_data = []
 
-                            if progress:
-                                progress.score = correct_count
-                                progress.submitted = True
-                                progress.locked = True
-                                progress.review_status = "reviewed"
-                                progress.reviewed_at = datetime.utcnow()
+                    pdf_bytes = generate_pdf(
 
-                            db.commit()
+                        name=student.get(
+                            "name",
+                            "Unknown"
+                        ),
 
-                        except Exception as e:
-                            db.rollback()
-                            st.error(f"❌ Objective DB update failed: {e}")
+                        class_name=st.session_state.get(
+                            "class_name",
+                            "Unknown Class"
+                        ),
 
-                        finally:
-                            db.close()
+                        subject=selected_subject.name,
 
-                        # -------------------------
-                        # Feedback
-                        # -------------------------
-                        if percent >= 80:
-                            st.balloons()
-                            st.success("🏆 Excellent Performance!")
+                        correct=data["correct"],
 
-                        elif percent >= 50:
-                            st.success("👍 Good Job!")
+                        total=data["total"],
 
-                        else:
-                            st.warning("📘 Keep Practicing.")
+                        percent=data["percent"],
 
-                        st.divider()
+                        details=pdf_data,
 
-                        # -------------------------
-                        # PDF
-                        # -------------------------
-                        pdf_bytes = generate_pdf(
-                            name=student.get("name", "Unknown"),
-                            class_name=st.session_state.get(
-                                "class_name",
-                                "Unknown Class"
-                            ),
-                            subject=selected_subject.name,
-                            correct=correct_count,
-                            total=total_questions,
-                            percent=percent,
-                            details=details,
-                            school_name=st.session_state.get(
-                                "school_name",
-                                "Unknown School"
-                            ),
-                            school_id=school_id_int
-                        )
+                        school_name=st.session_state.get(
+                            "school_name",
+                            "Unknown School"
+                        ),
 
-                        st.download_button(
-                            "📄 Download Test Result PDF",
-                            pdf_bytes,
-                            file_name=(
-                                f"{student.get('name', 'student')}_"
-                                f"{selected_subject.name}_result.pdf"
-                            ),
-                            mime="application/pdf"
-                        )
+                        school_id=school_id_int,
 
-                    except Exception as e:
-                        st.error(f"❌ Objective submission failed: {e}")
+                        test_type=pdf_test_type
+                    )
+
+                    st.download_button(
+                        "📄 Download Test Result PDF",
+                        pdf_bytes,
+                        file_name=(
+                            f"{student.get('name', 'student')}_"
+                            f"{selected_subject.name}_result.pdf"
+                        ),
+                        mime="application/pdf"
+                    )
