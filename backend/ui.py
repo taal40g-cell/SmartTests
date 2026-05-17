@@ -75,36 +75,48 @@ def set_background(
             f"""
             <style>
 
-            /* ==============================
-               MAIN APP BACKGROUND
-            ============================== */
+            html, body {{
+                background-color:#7abaa1 !important;
+                margin:0;
+                padding:0;
+            }}
 
-            .stApp {{
-
+            /* Force all Streamlit containers */
+            .stApp,
+            [data-testid="stAppViewContainer"],
+            .main,
+            section.main {{
                 background-image:
                     linear-gradient(
-                        rgba(255,255,255,.08),
-                        rgba(255,255,255,.08)
+                        rgba(255,255,255,.10),
+                        rgba(255,255,255,.10)
                     ),
                     url("data:image/png;base64,{base64_image}");
 
                 background-size:cover !important;
-
+                background-position:center !important;
                 background-repeat:no-repeat !important;
 
-                background-position:center center !important;
-
-                /* FIX FOR MOBILE */
+                /* mobile browsers hate fixed */
                 background-attachment:scroll !important;
 
-                min-height:100vh;
+                min-height:100vh !important;
             }}
 
+            /* Remove hidden theme layers */
+            [data-testid="stHeader"] {{
+                background:transparent !important;
+            }}
 
-            /* ==============================
-               SIDEBAR
-            ============================== */
+            [data-testid="stToolbar"] {{
+                background:transparent !important;
+            }}
 
+            .block-container {{
+                background:transparent !important;
+            }}
+
+            /* Sidebar */
             section[data-testid="stSidebar"] > div:first-child {{
 
                 background-image:
@@ -115,89 +127,22 @@ def set_background(
                     url("data:image/png;base64,{base64_image}");
 
                 background-size:cover !important;
-
+                background-position:center !important;
                 background-repeat:no-repeat !important;
-
-                background-position:center center !important;
 
                 background-attachment:scroll !important;
 
                 color:#0f3c2e !important;
-
             }}
-
-
-            /* ==============================
-               SIDEBAR TEXT
-            ============================== */
-
-            section[data-testid="stSidebar"] h1,
-            section[data-testid="stSidebar"] h2,
-            section[data-testid="stSidebar"] h3,
-            section[data-testid="stSidebar"] p,
-            section[data-testid="stSidebar"] span,
-            section[data-testid="stSidebar"] label {{
-
-                color:#0f3c2e !important;
-
-                font-weight:500;
-            }}
-
-
-            /* ==============================
-               SIDEBAR BUTTONS
-            ============================== */
-
-            .stSidebar button {{
-
-                background:
-                    linear-gradient(
-                        145deg,
-                        #9edbbb,
-                        #7bc8a2
-                    ) !important;
-
-                color:white !important;
-
-                border:none !important;
-
-                border-radius:10px !important;
-
-                margin-bottom:6px;
-
-                transition:.3s;
-            }}
-
-            .stSidebar button:hover {{
-
-                transform:translateY(-2px);
-
-                background:
-                    linear-gradient(
-                        145deg,
-                        #7bc8a2,
-                        #9edbbb
-                    ) !important;
-            }}
-
-
-            /* ==============================
-               MOBILE FIX
-            ============================== */
 
             @media(max-width:768px){{
-
+                html, body,
                 .stApp,
-                section[data-testid="stSidebar"] > div:first-child {{
-
-                    background-size:cover !important;
+                [data-testid="stAppViewContainer"] {{
 
                     background-position:center top !important;
-
-                    background-attachment:scroll !important;
-
+                    background-size:cover !important;
                 }}
-
             }}
 
             </style>
@@ -245,6 +190,10 @@ def set_background(
             """,
             unsafe_allow_html=True
         )
+
+
+
+
 
 def render_test(questions, subject):
     """Render a stable one-question-per-page test with synced pagination."""
