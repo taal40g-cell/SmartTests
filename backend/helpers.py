@@ -761,6 +761,8 @@ def highlight_score(val):
     return f'background-color: {color}'
 
 
+
+
 def normalize_question(q):
     """
     Converts a Question object into a JSON-serializable dict
@@ -789,16 +791,22 @@ def normalize_question(q):
             q["options"] = clean_options(q["options"])
         return q
 
-    # Otherwise assume it's a SQLAlchemy Question object
     return {
         "id": q.id,
-        "text": q.text,
-        "options": clean_options(q.options),
+
+        "text": (
+                getattr(q, "question_text", None)
+                or getattr(q, "text", "")
+        ),
+
+        "options": clean_options(
+            getattr(q, "options", [])
+        ),
+
         "category": getattr(q, "category", None),
+
         "difficulty": getattr(q, "difficulty", None),
     }
-
-
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 

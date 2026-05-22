@@ -2484,7 +2484,8 @@ def run_student_mode():
 
                             if is_correct:
                                 correct_count += 1
-                            st.write(q)
+                           
+
                             details.append({
                                 "question_id": q.get("id"),
                                 "question_text": q.get(
