@@ -3017,22 +3017,35 @@ def admin_review_panel():
     finally:
         db.close()
 
-
-
 ROLE_PERMISSIONS = {
-    "super_admin": ["all"],
+
+    "super_admin": [
+
+        "all"
+    ],
 
     "admin": [
+
         "manage_students",
+
         "upload_questions",
-        "manage_subjects"   # ✅ ADD THIS
+
+        "manage_subjects",
+
+        "delete_questions",          # ✅ ADD
+
+        "review_subjective",         # ✅ ADD
+
+        "view_results"               # ✅ ADD
     ],
 
     "teacher": [
-        "upload_questions"
+
+        "upload_questions",
+
+        "review_subjective"          # ✅ OPTIONAL
     ],
 }
-
 
 def has_permission(role, action):
     perms = ROLE_PERMISSIONS.get(role, [])
