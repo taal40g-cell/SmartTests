@@ -1903,10 +1903,17 @@ def run_student_mode():
             current_key = f"text_{current_q_idx}"
 
             if current_key not in st.session_state:
-                st.session_state[current_key] = (
-                    st.session_state.answers[current_q_idx]
-                )
 
+                val = st.session_state.answers[current_q_idx]
+
+                if val is None:
+                    val = ""
+                elif isinstance(val, dict):
+                    val = val.get("answer", "")
+                else:
+                    val = str(val)
+
+                st.session_state[current_key] = val
             # -------------------------
             # Disabled state
             # -------------------------
@@ -2484,7 +2491,7 @@ def run_student_mode():
 
                             if is_correct:
                                 correct_count += 1
-                           
+
 
                             details.append({
                                 "question_id": q.get("id"),

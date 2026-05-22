@@ -1642,59 +1642,164 @@ def run_admin_mode():
             # CSV MODE
             # -------------------------
             if uploaded_file:
+
                 try:
-                    df = pd.read_csv(uploaded_file, on_bad_lines='skip')
-                    st.info(f"CSV rows read: {len(df)}")
+
+                    # -------------------------
+                    # SAFE CSV READ
+                    # -------------------------
+                    df = pd.read_csv(
+
+                        uploaded_file,
+
+                        dtype=str,
+
+                        keep_default_na=False,
+
+                        encoding="utf-8",
+
+                        on_bad_lines="skip"
+
+                    )
+
+                    st.info(
+                        f"CSV rows read: {len(df)}"
+                    )
 
                     if df.empty:
-                        st.error("CSV is empty.")
+                        st.error(
+                            "CSV is empty."
+                        )
+
                         st.stop()
 
+                    # -------------------------
+                    # AUTO FIX COLUMN
+                    # -------------------------
                     if "question_text" not in df.columns:
                         first_col = df.columns[0]
-                        st.warning(f"'question_text' column not found, using: '{first_col}'")
-                        df.rename(columns={first_col: "question_text"}, inplace=True)
 
+                        st.warning(
+                            f"'question_text' column not found, using: '{first_col}'"
+                        )
+
+                        df.rename(
+
+                            columns={
+                                first_col: "question_text"
+                            },
+
+                            inplace=True
+
+                        )
+
+                    # -------------------------
+                    # PROCESS ROWS
+                    # -------------------------
                     for idx, row in df.iterrows():
-                        q_text = str(row["question_text"]).strip()
 
-                        if not q_text:
+                        q_text = str(
+                            row.get(
+                                "question_text",
+                                ""
+                            )
+                        ).strip()
+
+                        # -------------------------
+                        # SKIP BAD ROWS
+                        # -------------------------
+                        if (
+                                not q_text
+                                or q_text.lower() == "nan"
+                                or len(q_text) < 15
+                        ):
                             continue
 
+                        # -------------------------
+                        # FIX MULTILINE TEXT
+                        # -------------------------
+                        q_text = " ".join(
+                            q_text.splitlines()
+                        ).strip()
+
+                        # -------------------------
+                        # MARKS
+                        # -------------------------
                         try:
-                            marks_val = int(row.get("marks", 10))
+
+                            marks_val = int(
+                                row.get("marks", 10)
+                            )
+
                         except Exception:
+
                             marks_val = 10
 
+                        # -------------------------
+                        # SAVE CLEAN QUESTION
+                        # -------------------------
                         cleaned_subjective.append({
+
                             "question": q_text,
+
                             "marks": marks_val
+
                         })
 
                 except Exception as e:
-                    st.error(f"CSV error: {e}")
+
+                    st.error(
+                        f"CSV error: {e}"
+                    )
+
                     st.stop()
 
             # -------------------------
             # TEXT MODE
             # -------------------------
             elif bulk_text.strip():
-                import re
-                parts = re.split(r"\n?\s*\d+\.\s*", bulk_text.strip())
 
-                for p in parts:
-                    q_text = p.strip()
-                    if not q_text:
+                import re
+
+                lines = bulk_text.splitlines()
+
+                current_question = ""
+
+                for line in lines:
+
+                    line = line.strip()
+
+                    if not line:
                         continue
 
-                    cleaned_subjective.append({
-                        "question": q_text,
-                        "marks": 10
-                    })
+                    # -------------------------
+                    # NEW QUESTION
+                    # -------------------------
+                    if re.match(r"^\d+\.", line):
 
-            else:
-                st.warning("Provide CSV or paste questions.")
-                st.stop()
+                        # SAVE PREVIOUS
+                        if current_question.strip():
+                            cleaned_subjective.append({
+                                "question": current_question.strip(),
+                                "marks": 10
+                            })
+
+                        current_question = line
+
+                    # -------------------------
+                    # CONTINUATION LINE
+                    # -------------------------
+                    else:
+
+                        current_question += " " + line
+
+                # -------------------------
+                # SAVE LAST QUESTION
+                # -------------------------
+                if current_question.strip():
+                    cleaned_subjective.append({
+                        "question": current_question.strip()
+                    })
 
             # -------------------------
             # 🔍 DUPLICATE CHECK
@@ -2419,48 +2524,168 @@ def run_admin_mode():
             # -------------------------
             # 5️⃣ RENDER QUESTIONS
             # -------------------------
+
+            st.markdown(f"### 📚 Loaded {len(questions)} Questions")
+
+            # -------------------------
+            # ✅ SELECT ALL
+            # -------------------------
+            select_all = st.checkbox(
+                "✅ Select All Questions",
+                key="select_all_questions"
+            )
+
+            selected_question_ids = []
+
             for q in questions:
 
                 question_text = getattr(q, "question_text", "")
 
-                with st.expander(f"❓ {question_text[:120]}"):
+                col1, col2 = st.columns([0.08, 0.92])
 
-                    st.markdown(f"**Question:** {question_text}")
+                # -------------------------
+                # Checkbox
+                # -------------------------
+                with col1:
 
-                    if question_type == "Objective":
+                    checked = st.checkbox(
+                        "Select Question",
+                        value=select_all,
+                        key=f"check_{question_type}_{q.id}",
+                        label_visibility="collapsed"
+                    )
 
-                        options = getattr(q, "options", [])
+                    if checked:
+                        selected_question_ids.append(q.id)
 
-                        if isinstance(options, str):
-                            try:
-                                options = json.loads(options)
-                            except Exception:
-                                options = []
+                # -------------------------
+                # Question Content
+                # -------------------------
+                with col2:
 
-                        if options:
-                            st.markdown("**Options:**")
-                            for opt in options:
-                                st.write(f"- {opt}")
+                    with st.expander(
+                            f"❓ {question_text[:120]}"
+                    ):
 
-                        correct_answer = getattr(q, "correct_answer", "")
-                        st.success(f"Correct Answer: {correct_answer}")
+                        st.markdown(
+                            f"**Question:** {question_text}"
+                        )
+
+                        # -------------------------
+                        # OBJECTIVE
+                        # -------------------------
+                        if question_type == "Objective":
+
+                            options = getattr(q, "options", [])
+
+                            if isinstance(options, str):
+
+                                try:
+                                    options = json.loads(options)
+
+                                except Exception:
+                                    options = []
+
+                            if options:
+
+                                st.markdown("**Options:**")
+
+                                for opt in options:
+                                    st.write(f"- {opt}")
+
+                            correct_answer = getattr(
+                                q,
+                                "correct_answer",
+                                ""
+                            )
+
+                            st.success(
+                                f"Correct Answer: {correct_answer}"
+                            )
+
+                        # -------------------------
+                        # SUBJECTIVE
+                        # -------------------------
+                        else:
+
+                            marks = getattr(q, "marks", 10)
+
+                            st.info(f"Marks: {marks}")
+
+            st.divider()
+
+            # -------------------------
+            # 🗑️ BULK DELETE
+            # -------------------------
+            if selected_question_ids:
+
+                st.warning(
+                    f"{len(selected_question_ids)} question(s) selected."
+                )
+
+                confirm_delete = st.checkbox(
+                    "⚠️ I understand this action cannot be undone",
+                    key="confirm_bulk_delete"
+                )
+
+                if st.button(
+                        "🗑️ Delete Selected Questions",
+                        type="primary"
+                ):
+
+                    if not confirm_delete:
+
+                        st.error(
+                            "Please confirm deletion first."
+                        )
 
                     else:
-                        marks = getattr(q, "marks", 10)
-                        st.info(f"Marks: {marks}")
 
-                    # -------------------------
-                    # 🗑️ DELETE BUTTON
-                    # -------------------------
-                    if st.button(
-                            "🗑️ Delete Question",
-                            key=f"delete_{question_type}_{q.id}"
-                    ):
-                        db.delete(q)
-                        db.commit()
+                        try:
 
-                        st.success("Question deleted successfully.")
-                        st.rerun()
+                            if question_type == "Objective":
+
+                                deleted = (
+                                    db.query(ObjectiveQuestion)
+                                    .filter(
+                                        ObjectiveQuestion.id.in_(
+                                            selected_question_ids
+                                        )
+                                    )
+                                    .delete(
+                                        synchronize_session=False
+                                    )
+                                )
+
+                            else:
+
+                                deleted = (
+                                    db.query(SubjectiveQuestion)
+                                    .filter(
+                                        SubjectiveQuestion.id.in_(
+                                            selected_question_ids
+                                        )
+                                    )
+                                    .delete(
+                                        synchronize_session=False
+                                    )
+                                )
+
+                            db.commit()
+
+                            st.success(
+                                f"✅ {deleted} question(s) deleted successfully."
+                            )
+
+                            st.rerun()
+
+                        except Exception as e:
+
+                            db.rollback()
+
+                            st.error(
+                                f"❌ Bulk delete failed: {e}"
+                            )
 
         finally:
             db.close()

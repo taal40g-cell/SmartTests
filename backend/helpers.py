@@ -515,12 +515,14 @@ def render_subjective_test(questions, subject):
 
     # Load subjective question text safely (supports different key names)
     question_text = (
-            q.get("question")
-            or q.get("question_text")
+            q.get("question_text")
+            or q.get("question")
             or q.get("text")
             or q.get("title")
-            or "No question text"
     )
+
+    if not question_text:
+        question_text = "No question text"
 
     # === Question Box ===
     st.markdown(f"""
