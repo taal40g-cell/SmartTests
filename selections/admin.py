@@ -1834,12 +1834,22 @@ def run_admin_mode():
             # -------------------------
             if cleaned_subjective:
 
+                st.write("DEBUG cleaned_subjective:")
+                st.json(cleaned_subjective)
+
+                st.write("DEBUG COUNT:", len(cleaned_subjective))
+                st.write("DEBUG school_id:", school_id)
+                st.write("DEBUG class_id:", class_id)
+                st.write("DEBUG subject_id:", subject_id)
+
                 db = get_session()
 
                 try:
                     count = 0
 
                     for q in cleaned_subjective:
+                        st.write("INSERTING:", q)
+
                         db.add(
                             SubjectiveQuestion(
                                 school_id=school_id,
@@ -1849,9 +1859,14 @@ def run_admin_mode():
                                 marks=int(q.get("marks", 10))
                             )
                         )
+
                         count += 1
 
+                    st.write("ABOUT TO COMMIT")
+
                     db.commit()
+
+                    st.write("COMMIT SUCCESS")
 
                     # ✅ SAFE DISPLAY (no stale names)
                     st.success(
@@ -1862,12 +1877,13 @@ def run_admin_mode():
                     st.rerun()
 
                 except Exception as e:
+
                     db.rollback()
+
                     st.error(f"Upload failed: {e}")
 
                 finally:
                     db.close()
-
             else:
                 st.info("⚠️ No new questions to upload.")
 
@@ -2488,33 +2504,130 @@ def run_admin_mode():
             # -------------------------
             # 4️⃣ LOAD QUESTIONS
             # -------------------------
+            # -------------------------
+            # 4️⃣ LOAD QUESTIONS
+            # -------------------------
+
+            PAGE_SIZE = 10
+
+            if "delete_page" not in st.session_state:
+                st.session_state.delete_page = 1
+
+            current_page = st.session_state.delete_page
+
+            # -------------------------
+            # OBJECTIVE QUERY
+            # -------------------------
             if question_type == "Objective":
 
-                questions = (
+                query = (
                     db.query(ObjectiveQuestion)
                     .filter_by(
                         school_id=school_id,
                         class_id=class_id,
                         subject_id=subject_id
                     )
-                    .order_by(ObjectiveQuestion.id.desc())
-                    .all()
+                    .order_by(
+                        ObjectiveQuestion.id.desc()
+                    )
                 )
 
+            # -------------------------
+            # SUBJECTIVE QUERY
+            # -------------------------
             else:
-                questions = (
+
+                query = (
                     db.query(SubjectiveQuestion)
                     .filter_by(
                         school_id=school_id,
                         class_id=class_id,
                         subject_id=subject_id
                     )
-                    .order_by(SubjectiveQuestion.id.desc())
-                    .all()
+                    .order_by(
+                        SubjectiveQuestion.id.desc()
+                    )
                 )
 
-            st.write("Questions Found:", len(questions))
+            # -------------------------
+            # TOTAL QUESTIONS
+            # -------------------------
+            total_questions = query.count()
 
+            # -------------------------
+            # PAGINATED QUESTIONS
+            # -------------------------
+            questions = (
+
+                query
+
+                .offset(
+                    (current_page - 1) * PAGE_SIZE
+                )
+
+                .limit(PAGE_SIZE)
+
+                .all()
+            )
+
+            # -------------------------
+            # TOTAL PAGES
+            # -------------------------
+            total_pages = max(
+
+                1,
+
+                (total_questions + PAGE_SIZE - 1)
+                // PAGE_SIZE
+            )
+
+            # -------------------------
+            # PAGE CONTROLS
+            # -------------------------
+            col1, col2, col3 = st.columns([1, 2, 1])
+
+            with col1:
+
+                if st.button(
+                        "⬅️ Previous",
+                        disabled=current_page <= 1
+                ):
+                    st.session_state.delete_page -= 1
+
+                    st.rerun()
+
+            with col3:
+
+                if st.button(
+                        "➡️ Next",
+                        disabled=current_page >= total_pages
+                ):
+                    st.session_state.delete_page += 1
+
+                    st.rerun()
+
+            with col2:
+
+                st.markdown(
+
+                    f"""
+                    <div style='text-alif cleaned_subjective:
+                    
+                    
+                    ign:center; padding-top:8px;'>
+
+                    Page {current_page} of {total_pages}
+
+                    </div>
+                    """,
+
+                    unsafe_allow_html=True
+                )
+
+            st.write(
+                "Questions Found:",
+                total_questions
+            )
             if not questions:
                 st.info("No questions found for this selection.")
                 st.stop()
