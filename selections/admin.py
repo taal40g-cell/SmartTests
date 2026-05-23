@@ -1834,14 +1834,7 @@ def run_admin_mode():
             # -------------------------
             if cleaned_subjective:
 
-                st.write("DEBUG cleaned_subjective:")
-                st.json(cleaned_subjective)
-
-                st.write("DEBUG COUNT:", len(cleaned_subjective))
-                st.write("DEBUG school_id:", school_id)
-                st.write("DEBUG class_id:", class_id)
-                st.write("DEBUG subject_id:", subject_id)
-
+ 
                 db = get_session()
 
                 try:
