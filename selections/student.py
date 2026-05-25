@@ -2179,25 +2179,26 @@ def run_student_mode():
             # Sticky warning
             # -------------------------
             st.markdown(
-                """
+                f"""
                 <div style="
-                    position:sticky;
-                    top:0;
-                    background:#cbd5c0;
-                    color:#000000;
-                    padding:12px;
-                    text-align:center;
-                    border-radius:10px;
-                    border:1px solid #ffd54f;
-                    margin-bottom:10px;
-                    font-weight:bold;
+                     padding: 6px 8px;
+                    border-radius: 8px;
+                    background-color:#cbd5c0;
+                    border: 2px solid {timer_border_color};
+                    color: #111827;
+                    text-align: center;
+                    font-size: 16px;
+                    font-weight: 600;
+                    margin-bottom: 8px;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
                 ">
-                ⚠️ Copy/Paste activity is monitored.
-                Multiple violations may auto-submit the test.
+                    ⚠️ Copy/Paste activity is monitored.
+                    Multiple violations may auto-submit the test.
                 </div>
                 """,
                 unsafe_allow_html=True
             )
+
 
             # -------------------------
             # Submitted state
