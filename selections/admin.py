@@ -3583,28 +3583,62 @@ def run_admin_mode():
         # -------------------------
         # 🚀 EXECUTION
         # -------------------------
-        if confirm_reset and st.button("♻️ Reset Test Attempt", key="reset_attempt_btn"):
+        # -------------------------
+        # 🚀 EXECUTION
+        # -------------------------
+        if confirm_reset and st.button(
+                "♻️ Reset Test Attempt",
+                key="reset_attempt_btn"
+        ):
 
             success_count = 0
 
             for code in selected_codes:
+
                 try:
-                    # IMPORTANT: ensure reset_test accepts student_id OR convert here
-                    success = reset_test(code)
+
+                    # access code → student id
+                    student_id = users[code]["id"]
+
+                    success = reset_test(
+                        student_id
+                    )
 
                     if success:
                         success_count += 1
 
-                except Exception:
+                except Exception as e:
+                    print("RESET ERROR:", e)
                     continue
 
+            # -------------------------
+            # Clear cached progress
+            # -------------------------
+            for k in list(st.session_state.keys()):
+
+                if str(k).startswith(
+                        "progress_"
+                ):
+                    del st.session_state[k]
+
+            # -------------------------
+            # Success message
+            # -------------------------
             if len(selected_codes) == 1:
-                st.success(f"🔄 Reset completed for {users[selected_codes[0]]['name']}")
+
+                st.success(
+                    f"🔄 Reset completed for "
+                    f"{users[selected_codes[0]]['name']}"
+                )
+
             else:
-                st.success(f"🔄 Reset completed for {success_count} students")
+
+                st.success(
+                    f"🔄 Reset completed for "
+                    f"{success_count} students"
+                )
 
             st.rerun()
-
 
 
 

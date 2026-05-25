@@ -31,6 +31,9 @@ def get_base64_image(file_path: str) -> str:
 
 
 
+# =====================================================
+#
+# =====================================================
 def set_background(
     file_path: str = None,
     color: str = "#7abaa1",
@@ -192,95 +195,9 @@ def set_background(
         )
 
 
-
-
-
-def render_test(questions, subject):
-    """Render a stable one-question-per-page test with synced pagination."""
-    st.subheader(f"⏳ {subject} Test In Progress")
-
-    # === Initialize session vars ===
-    st.session_state.setdefault("page", 1)
-    total_questions = len(questions)
-    st.session_state.setdefault("answers", [-1] * total_questions)
-
-    # === Ensure correct length of answers ===
-    if len(st.session_state.answers) != total_questions:
-        st.session_state.answers = st.session_state.answers[:total_questions] + [-1] * (total_questions - len(st.session_state.answers))
-
-    # === Pagination ===
-    per_page = 1
-    total_pages = (total_questions - 1) // per_page + 1
-    page = max(1, min(st.session_state.page, total_pages))
-    st.session_state.page = page
-    q_index = page - 1
-
-    # === Get question ===
-    q = questions[q_index]
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown(f"**Q{q_index + 1}. {q.get('question','')}**")
-
-    # === Parse options ===
-    opts = []
-    raw_opts = q.get("options", [])
-    if isinstance(raw_opts, str):
-        try:
-            opts = json.loads(raw_opts)
-        except Exception:
-            opts = [o.strip() for o in raw_opts.split(",") if o.strip()]
-    elif isinstance(raw_opts, list):
-        opts = [str(o) for o in raw_opts]
-    else:
-        opts = [str(raw_opts)]
-
-    # === Get current answer ===
-    saved_answer = st.session_state.answers[q_index]
-    current_selection = opts[saved_answer] if 0 <= saved_answer < len(opts) else None
-
-    # === Radio with persistent key ===
-    choice = st.radio(
-        "Choose an answer:",
-        options=[""] + opts,
-        index=(opts.index(current_selection) + 1) if current_selection in opts else 0,
-        key=f"choice_q_{q_index}_{st.session_state.get('test_id', '')}",
-    )
-
-    # === Save selected answer ===
-    st.session_state.answers[q_index] = opts.index(choice) if choice in opts else -1
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # === Navigation Controls ===
-    col1, col2, col3 = st.columns([1, 2, 1])
-
-    with col1:
-        if page > 1:
-            if st.button("⬅ Previous", key=f"prev_btn_{q_index}"):
-                st.session_state.page -= 1
-                st.rerun()
-
-    with col2:
-        st.markdown(
-            f"<div style='text-align:center; font-weight:600;'>Question {q_index+1} of {total_questions}</div>",
-            unsafe_allow_html=True
-        )
-
-    with col3:
-        if page < total_pages:
-            if st.button("Next ➡", key=f"next_btn_{q_index}"):
-                st.session_state.page += 1
-                st.rerun()
-        else:
-            if st.button("✅ Submit Test", key="submit_btn_final"):
-                st.session_state.submitted = True
-                st.rerun()
-
-
-
-
-
-
-
+# =====================================================
+#
+# =====================================================
 def generate_pdf(
     name,
     class_name,
@@ -295,13 +212,11 @@ def generate_pdf(
     test_type="objective"
 ):
 
-    from io import BytesIO
-    from datetime import datetime
 
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.utils import ImageReader
+
+    # =====================================================
+    #
+    # =====================================================
     from reportlab.platypus import (
         Table,
         TableStyle,
@@ -601,9 +516,7 @@ def generate_pdf(
 
         )
 
-    # =========================================
-    # SUBJECTIVE
-    # =========================================
+
     # =========================================
     # SUBJECTIVE
     # =========================================
@@ -756,6 +669,29 @@ def generate_pdf(
 
 
 
+    # =========================================
+    #
+    # =========================================
+def get_student_display(student, class_name_map: dict) -> str:
+    """
+    Return a formatted display string for both dict and ORM student.
+    Uses class_id and resolves class name from the map safely.
+    """
+
+    # Extract student info
+    if hasattr(student, "__dict__"):  # ORM object
+        name = getattr(student, "name", "Student")
+        class_id = getattr(student, "class_id", None)
+    else:  # dictionary
+        name = student.get("name", "Student")
+        class_id = student.get("class_id")
+
+    # Resolve class name from the map instead of querying DB
+    class_name = class_name_map.get(class_id, "Unknown")
+
+    return f"Welcome {name} | Class: {class_name.upper()}"
+
+
 # ==============================
 # 🧩 Other Small Helpers
 # ==============================
@@ -778,6 +714,9 @@ def excel_download_buffer(dfs: dict, filename="smarttest_backup.xlsx"):
 
 
 
+# =====================================================
+#
+# =====================================================
 from backend.models import Class
 def load_classes(school_id: int, db=None):
     """
