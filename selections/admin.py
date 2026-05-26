@@ -2607,7 +2607,7 @@ def run_admin_mode():
                     <div style='text-alif cleaned_subjective:
                     
                     
-                    ign:center; padding-top:8px;'>
+                  
 
                     Page {current_page} of {total_pages}
 
