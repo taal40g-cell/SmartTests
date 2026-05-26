@@ -216,24 +216,29 @@ def run_student_mode():
     # -----------------------------
     # Header & Banner
     # -----------------------------
-    st.markdown("""
-    <div style="
-        position: sticky;
-        top: 0;
-        background-color: #fff3cd;
-        color: #F54927;
-        padding: 10px;
-        font-weight: bold;
-        text-align: center;
-        z-index: 999;
-        border-radius: 8px;
-    ">
-    ⚠️ Retakes are controlled by Admins! Submit your test before time runs out
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown("###  Student Portal")
-    st.markdown("Welcome to your personalized test center.")
+    st.markdown(
+        """
+        <div style="
+             padding: 6px 8px;
+            border-radius: 8px;
+            background-color:#cbd5c0;
+            border: 2px solid #F54927;
+            color: #111827;
+            text-align: center;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        ">
+            ⚠️ Retakes are controlled by Admins! 
+            Submit your test before time runs out.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
+    st.markdown("### Student Portal")
+    st.markdown("Welcome to your personalized test center.")
 
 
     from backend.database import get_session
@@ -2063,8 +2068,12 @@ def run_student_mode():
             # -------------------------
             violation_type = st.query_params.get("violation")
 
-            if violation_type:
+            if isinstance(violation_type, list):
+                violation_type = violation_type[0]
 
+            violation_type = str(violation_type).strip().lower() if violation_type else None
+
+            if violation_type not in (None, "", "none"):
                 try:
 
                     # Streamlit may return list
@@ -2126,7 +2135,8 @@ def run_student_mode():
                 finally:
 
                     # Clear query params
-                    st.query_params.clear()
+                    st.query_params.pop("violation", None)
+                    st.query_params.pop("time", None)
 
             # -------------------------
             # Restore current answer
