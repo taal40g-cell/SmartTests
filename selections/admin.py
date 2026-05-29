@@ -1657,7 +1657,10 @@ def run_admin_mode():
         # -------------------------
         # 📘 LOAD SUBJECTS (SAFE SYNC)
         # -------------------------
-        subjects = load_subjects(class_id=class_id, school_id=school_id)
+        subjects = load_subjects(
+            class_id=class_id,
+            school_id=school_id
+        )
 
         if not subjects:
             st.warning("⚠️ No subjects available for this class.")
@@ -1665,8 +1668,11 @@ def run_admin_mode():
             st.stop()
 
         subject_ids = [s["id"] for s in subjects]
-        subject_lookup = {s["id"]: s for s in subjects}
 
+        subject_lookup = {
+            s["id"]: s
+            for s in subjects
+        }
 
         # ✅ Ensure valid subject selection
         if (
@@ -1678,7 +1684,7 @@ def run_admin_mode():
         selected_subject_id = st.selectbox(
             "Select Subject",
             subject_ids,
-            format_func=lambda sid: subject_lookup[sid].name,
+            format_func=lambda sid: subject_lookup[sid]["name"],
             key="upload_subject"
         )
 
@@ -1696,31 +1702,51 @@ def run_admin_mode():
         # -------------------------
         # 🚀 UPLOAD BUTTON
         # -------------------------
-        if st.button("✅ Upload Questions", key="confirm_upload_btn"):
+        if st.button(
+                "✅ Upload Questions",
+                key="confirm_upload_btn"
+        ):
 
             if not uploaded_file:
                 st.warning("Please upload a JSON file.")
                 st.stop()
 
             try:
+
                 import json
+
                 data = json.load(uploaded_file)
 
                 if not isinstance(data, list):
-                    st.error("Invalid format — file must contain a list of questions.")
+                    st.error(
+                        "Invalid format — file must contain a list of questions."
+                    )
+
                     st.stop()
 
                 cleaned = []
 
                 for idx, q in enumerate(data, start=1):
 
-                    if not all(k in q for k in ["question", "options", "answer"]):
-                        st.error(f"⚠️ Question {idx} missing required fields.")
+                    if not all(
+                            k in q
+                            for k in ["question", "options", "answer"]
+                    ):
+                        st.error(
+                            f"⚠️ Question {idx} missing required fields."
+                        )
+
                         st.stop()
 
                     cleaned.append({
+
                         "question": q["question"].strip(),
-                        "options": [opt.strip() for opt in q["options"]],
+
+                        "options": [
+                            opt.strip()
+                            for opt in q["options"]
+                        ],
+
                         "answer": q["answer"].strip()
                     })
 
@@ -1728,18 +1754,24 @@ def run_admin_mode():
                 # 🔍 CHECK DUPLICATES
                 # ----------------------
                 existing_questions_text = {
+
                     q.question_text.lower()
+
                     for q in get_objective_questions(
                         class_id=class_id,
-                        subject_id=sub.id,
+                        subject_id=sub["id"],
                         school_id=school_id
                     )
                 }
 
                 duplicates = [
+
                     q["question"]
+
                     for q in cleaned
-                    if q["question"].lower() in existing_questions_text
+
+                    if q["question"].lower()
+                       in existing_questions_text
                 ]
 
                 if duplicates:
@@ -1749,8 +1781,11 @@ def run_admin_mode():
                     )
 
                 cleaned = [
+
                     q for q in cleaned
-                    if q["question"].lower() not in existing_questions_text
+
+                    if q["question"].lower()
+                       not in existing_questions_text
                 ]
 
                 if not cleaned:
@@ -1758,28 +1793,37 @@ def run_admin_mode():
                     st.stop()
 
                 # ----------------------
-                 # 💾 SAVE TO DATABASE
+                # 💾 SAVE TO DATABASE
                 # ----------------------
                 result = handle_uploaded_questions(
                     class_id=class_id,
-                    subject_id=sub.id,
+                    subject_id=sub["id"],
                     valid_questions=cleaned,
                     school_id=school_id
                 )
 
                 if result.get("success"):
+
                     st.success(
                         f"🎯 Uploaded {result['inserted']} new questions "
-                        f"for {class_lookup[class_id].name} - {sub.name}."
+                        f"for {class_lookup[class_id].name} - "
+                        f"{sub['name']}."
                     )
+
                     st.cache_data.clear()
+
                     st.rerun()
+
                 else:
-                    st.warning(f"🚫 Upload failed: {result.get('error', 'Unknown error')}")
+
+                    st.warning(
+                        f"🚫 Upload failed: "
+                        f"{result.get('error', 'Unknown error')}"
+                    )
 
             except Exception as e:
-                st.error(f"🚫 Upload error: {e}")
 
+                st.error(f"🚫 Upload error: {e}")
 
 
     # =========================================================
