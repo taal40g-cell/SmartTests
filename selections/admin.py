@@ -1664,9 +1664,9 @@ def run_admin_mode():
             st.info("👉 Please add subjects in Manage Subjects first.")
             st.stop()
 
-            
         subject_ids = [s["id"] for s in subjects]
         subject_lookup = {s["id"]: s for s in subjects}
+
 
         # ✅ Ensure valid subject selection
         if (
