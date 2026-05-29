@@ -672,6 +672,7 @@ def generate_pdf(
     # =========================================
     #
     # =========================================
+
 def get_student_display(student, class_name_map: dict) -> str:
     """
     Return a formatted display string for both dict and ORM student.
@@ -827,3 +828,23 @@ def get_subject_id_by_name(subject_name: str) -> int | None:
         (s["id"] for s in st.session_state.get("subjects", []) if s["name"] == subject_name),
         None
     )
+
+
+def parse_json_field(data):
+    if not data:
+        return []
+
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, str):
+
+        try:
+            return json.loads(data)
+
+        except:
+            return []
+
+    return []
+
+

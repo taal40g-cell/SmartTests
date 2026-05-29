@@ -358,15 +358,21 @@ def run_admin_mode():
 
         schools = [s for s in get_all_schools() if not s.is_system]
 
-        if schools:
-            df_schools = pd.DataFrame([
-                {"ID": s.id, "Name": s.name, "Code": s.code}
-                for s in schools
-            ])
-            st.dataframe(df_schools, use_container_width=True)
-        else:
-            st.info("No schools found yet.")
+        with st.expander("📋 View Schools", expanded=False):
 
+            if schools:
+                df_schools = pd.DataFrame([
+                    {"ID": s.id, "Name": s.name, "Code": s.code}
+                    for s in schools
+                ])
+
+                st.dataframe(
+                    df_schools,
+                    use_container_width=True
+                )
+
+            else:
+                st.info("No schools found yet.")
         # ➕ Add School
         st.markdown("### ➕ Add New School")
 
@@ -620,6 +626,8 @@ def run_admin_mode():
                 st.error(f"⚠️ Error processing CSV: {e}")
 
 
+
+
     # -----------------------
     # 👥 Manage Students
     # -----------------------
@@ -647,20 +655,28 @@ def run_admin_mode():
         # --------------------------------------------------
         # 🔎 Search & Filter
         # --------------------------------------------------
+
         st.markdown("### 🔎 Search & Filter Students")
 
         search_q = st.text_input(
-            "Search by name, access code or class ID (leave empty to list all)",
+            "Search by name, access code or class ID",
             key="manage_students_search"
         ).strip()
 
         try:
             students = get_students_by_school(school_id) or []
+
         except Exception as e:
+
             st.error(f"🚫 Failed to load students: {e}")
             st.stop()
 
+        # --------------------------------------------------
+        # BUILD DATAFRAME
+        # --------------------------------------------------
+
         df = pd.DataFrame([
+
             {
                 "id": s.get("id"),
                 "name": s.get("name", ""),
@@ -668,164 +684,402 @@ def run_admin_mode():
                 "class_id": s.get("class_id", 0),
                 "subject": s.get("subject", "")
             }
+
             for s in students
+
         ])
 
         if df.empty:
-            st.info("🚫 No students found for this school.")
+            st.info("🚫 No students found.")
             st.stop()
 
+        # --------------------------------------------------
+        # FILTER
+        # --------------------------------------------------
+
         if search_q:
+
             q = search_q.lower()
+
             mask = (
-                    df["name"].astype(str).str.lower().str.contains(q)
-                    | df["access_code"].astype(str).str.lower().str.contains(q)
-                    | df["class_id"].astype(str).str.contains(q)
+
+                    df["name"]
+                    .astype(str)
+                    .str.lower()
+                    .str.contains(q)
+
+                    |
+
+                    df["access_code"]
+                    .astype(str)
+                    .str.lower()
+                    .str.contains(q)
+
+                    |
+
+                    df["class_id"]
+                    .astype(str)
+                    .str.contains(q)
+
             )
+
             df_filtered = df[mask].copy()
+
         else:
+
             df_filtered = df.copy()
 
-        st.write(f"Showing {len(df_filtered)} / {len(df)} students")
-        st.dataframe(df_filtered.reset_index(drop=True), use_container_width=True)
-
         # --------------------------------------------------
-        # ✏️ Edit Student
+        # RESULTS METRIC
         # --------------------------------------------------
-        st.markdown("### ✏️ Edit Selected Student")
 
-        if not df_filtered.empty:
+        st.metric(
+            label="Filtered Students",
+            value=f"{len(df_filtered)} / {len(df)}"
+        )
 
-            selected_idx = st.selectbox(
-                "Pick a student to edit",
-                df_filtered.index.tolist(),
-                format_func=lambda i: (
-                    f"{df_filtered.loc[i, 'name']} — "
-                    f"{df_filtered.loc[i, 'access_code']} "
-                    f"(Class ID: {df_filtered.loc[i, 'class_id']})"
-                ),
-                key="manage_student_select_idx"
-            )
+        # ==================================================
+        # 📂 COLLAPSIBLE STUDENT LIST
+        # ==================================================
 
-            student_row = df_filtered.loc[selected_idx]
-            selected_id = int(student_row["id"])
+        with st.expander(
+                "📂 Open Student Management",
+                expanded=False
+        ):
 
-            st.write(f"Editing **{student_row['name']}** (Access: `{student_row['access_code']}`)")
-
-            # Name
-            new_name = st.text_input(
-                "Update Name",
-                value=str(student_row.get("name", "")).strip(),
-                key="upd_name"
+            st.dataframe(
+                df_filtered.reset_index(drop=True),
+                use_container_width=True
             )
 
             # --------------------------------------------------
-            # 📚 Class (Synced to School)
+            # EMPTY
             # --------------------------------------------------
-            classes = db.query(Class).filter_by(school_id=school_id).all()
 
-            if not classes:
-                st.warning("⚠️ No classes found for this school.")
+            if df_filtered.empty:
+                st.warning("No matching students found.")
                 st.stop()
 
-            class_map = {c.id: c.name for c in classes}
-            current_class_id = int(student_row.get("class_id") or 0)
+            # --------------------------------------------------
+            # PAGINATION
+            # --------------------------------------------------
 
-            new_class_id = st.selectbox(
-                "Update Class",
-                options=list(class_map.keys()),
-                index=list(class_map.keys()).index(current_class_id)
-                if current_class_id in class_map else 0,
-                format_func=lambda cid: f"ID {cid} — {class_map[cid]}",
-                key="upd_class"
+            import math
+
+            page_size = 10
+
+            total_pages = max(
+                1,
+                math.ceil(
+                    len(df_filtered) / page_size
+                )
             )
 
-            try:
-                subjects = db.query(Subject).filter_by(school_id=school_id).all()
-            except Exception:
-                subjects = []
+            page = st.number_input(
 
-            subject_raw = str(student_row.get("subject", "") or "").strip()
+                "Page",
 
-            if subjects:
+                min_value=1,
 
-                # Map name → object
-                subject_map = {s.name: s for s in subjects}
+                max_value=total_pages,
 
-                # Determine default selected subject object
-                default_subject_obj = subject_map.get(subject_raw)
+                value=1,
 
-                new_subject_obj = st.selectbox(
-                    "Update Subject (optional)",
-                    subjects,
-                    index=subjects.index(default_subject_obj)
-                    if default_subject_obj in subjects else 0,
-                    format_func=lambda s: s.name,  # 👈 THIS FIXES DISPLAY
-                    key="upd_subject"
-                )
+                key="student_page"
 
-                new_subject = new_subject_obj.name  # Save only the name
+            )
 
-            else:
-                new_subject = st.text_input(
-                    "Subject (optional)",
-                    value=subject_raw,
-                    key="upd_subject_free"
-                )
+            start = (page - 1) * page_size
+            end = start + page_size
 
+            page_df = (
+
+                df_filtered
+                .reset_index(drop=True)
+                .iloc[start:end]
+
+            )
+
+            st.caption(
+
+                f"Showing {start + 1}"
+                f"–{min(end, len(df_filtered))}"
+                f" of {len(df_filtered)} students"
+
+            )
 
             # --------------------------------------------------
-            # Actions
+            # STUDENT SELECTOR
             # --------------------------------------------------
-            col1, col2 = st.columns(2)
 
-            # Save
-            with col1:
-                if st.button("💾 Save Changes", key="save_student_changes"):
-                    try:
-                        update_student_db(
-                            selected_id,
-                            new_name.strip(),
-                            new_class_id,
-                            new_subject
+            selected_pos = st.selectbox(
+
+                "Select Student",
+
+                page_df.index,
+
+                format_func=lambda i:
+                f"{page_df.loc[i, 'name']} | "
+                f"{page_df.loc[i, 'access_code']} | "
+                f"Class {page_df.loc[i, 'class_id']}",
+
+                key="student_picker"
+
+            )
+
+            student_row = page_df.loc[selected_pos]
+
+            selected_id = int(
+                student_row["id"]
+            )
+
+            st.divider()
+
+            # ==================================================
+            # 👨‍🎓 STUDENT EDIT PANEL
+            # ==================================================
+
+            with st.expander(
+
+                    f"👨‍🎓 Edit: {student_row['name']}",
+
+                    expanded=False
+
+            ):
+
+                st.markdown(
+
+                    f"""
+                    ### ✏️ Editing Student
+
+                    👤 Name: **{student_row['name']}**
+
+                    🔑 Access Code:
+                    `{student_row['access_code']}`
+                    """
+
+                )
+
+                # --------------------------------------------------
+                # NAME
+                # --------------------------------------------------
+
+                new_name = st.text_input(
+
+                    "Update Name",
+
+                    value=str(
+                        student_row.get(
+                            "name",
+                            ""
                         )
-                        st.success("✅ Student updated successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"🚫 Failed to update student: {e}")
+                    ).strip(),
 
-            # Delete
-            with col2:
-                if "delete_confirm_for" not in st.session_state:
-                    st.session_state.delete_confirm_for = None
+                    key=f"upd_name_{selected_id}"
 
-                if st.session_state.delete_confirm_for != selected_id:
-                    if st.button("🗑️ Delete Student", key=f"delete_student_btn_{selected_id}"):
-                        st.session_state.delete_confirm_for = selected_id
-                        st.rerun()
-                else:
-                    st.warning("⚠️ This action cannot be undone.")
+                )
 
-                    confirm_col1, confirm_col2 = st.columns(2)
+                # --------------------------------------------------
+                # CLASS
+                # --------------------------------------------------
 
-                    with confirm_col1:
-                        if st.button("✅ Confirm Delete", key=f"confirm_delete_yes_{selected_id}"):
-                            try:
-                                success = delete_student_db(selected_id, school_id)
+                classes = db.query(
+                    Class
+                ).filter_by(
+                    school_id=school_id
+                ).all()
+
+                class_map = {
+
+                    c.id: c.name
+                    for c in classes
+
+                }
+
+                current_class_id = int(
+                    student_row.get(
+                        "class_id",
+                        0
+                    )
+                )
+
+                new_class_id = st.selectbox(
+
+                    "Update Class",
+
+                    options=list(
+                        class_map.keys()
+                    ),
+
+                    index=(
+
+                        list(class_map.keys()).index(
+                            current_class_id
+                        )
+
+                        if current_class_id in class_map
+                        else 0
+
+                    ),
+
+                    format_func=lambda cid:
+                    class_map[cid],
+
+                    key=f"class_{selected_id}"
+
+                )
+
+                # --------------------------------------------------
+                # SUBJECT
+                # --------------------------------------------------
+
+                subjects = db.query(
+                    Subject
+                ).filter_by(
+                    school_id=school_id
+                ).all()
+
+                subject_names = [
+
+                    s.name
+                    for s in subjects
+
+                ]
+
+                current_subject = (
+                    student_row.get(
+                        "subject",
+                        ""
+                    )
+                )
+
+                new_subject = st.selectbox(
+
+                    "Subject",
+
+                    subject_names,
+
+                    index=(
+
+                        subject_names.index(
+                            current_subject
+                        )
+
+                        if current_subject in subject_names
+                        else 0
+
+                    ),
+
+                    key=f"subject_{selected_id}"
+
+                )
+
+                st.divider()
+
+                # --------------------------------------------------
+                # ACTIONS
+                # --------------------------------------------------
+
+                col1, col2 = st.columns(2)
+
+                # -------------------------
+                # SAVE
+                # -------------------------
+
+                with col1:
+
+                    if st.button(
+                            "💾 Save Changes",
+                            key=f"save_{selected_id}"
+                    ):
+
+                        try:
+
+                            update_student_db(
+
+                                selected_id,
+                                new_name.strip(),
+                                new_class_id,
+                                new_subject
+
+                            )
+
+                            st.success(
+                                "✅ Student updated successfully!"
+                            )
+
+                            st.rerun()
+
+                        except Exception as e:
+
+                            st.error(
+                                f"🚫 Failed: {e}"
+                            )
+
+                # -------------------------
+                # DELETE
+                # -------------------------
+
+                with col2:
+
+                    if "delete_confirm_for" not in st.session_state:
+                        st.session_state.delete_confirm_for = None
+
+                    if (
+                            st.session_state.delete_confirm_for
+                            != selected_id
+                    ):
+
+                        if st.button(
+                                "🗑️ Delete",
+                                key=f"del_{selected_id}"
+                        ):
+                            st.session_state.delete_confirm_for = selected_id
+                            st.rerun()
+
+                    else:
+
+                        st.warning(
+                            "⚠️ Delete permanently?"
+                        )
+
+                        c1, c2 = st.columns(2)
+
+                        with c1:
+
+                            if st.button(
+                                    "✅ Confirm",
+                                    key=f"yes_{selected_id}"
+                            ):
+
+                                success = delete_student_db(
+                                    selected_id,
+                                    school_id
+                                )
+
                                 if success:
-                                    st.success("✅ Student deleted.")
+
+                                    st.success(
+                                        "Deleted successfully."
+                                    )
+
                                 else:
-                                    st.error("🚫 Student could not be deleted.")
+
+                                    st.error(
+                                        "Delete failed."
+                                    )
+
                                 st.session_state.delete_confirm_for = None
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"🚫 Could not delete student: {e}")
-                                st.session_state.delete_confirm_for = None
 
-                    with confirm_col2:
-                        if st.button("🚫 Cancel", key=f"confirm_delete_no_{selected_id}"):
-                            st.session_state.delete_confirm_for = None
-                            st.rerun()
+                        with c2:
+
+                            if st.button(
+                                    "🚫 Cancel",
+                                    key=f"cancel_{selected_id}"
+                            ):
+                                st.session_state.delete_confirm_for = None
+                                st.rerun()
 
         # --------------------------------------------------
         # Export
@@ -849,7 +1103,6 @@ def run_admin_mode():
     elif selected_tab == "🛡️ Manage Admins" and current_role in ["super_admin", "admin"]:
 
         st.header("🛡️ Manage Admins")
-
         # --------------------------------------------------
         # 🏫 SCHOOL (Single Source of Truth)
         # --------------------------------------------------
@@ -870,103 +1123,156 @@ def run_admin_mode():
         # --------------------------------------------------
         # 📋 Existing Admins
         # --------------------------------------------------
-        st.subheader(f"📋 Admins for {school_obj.name}")
+        with st.expander(f"📋 Admins for {school_obj.name}", expanded=False):
 
-        admins = get_all_admins()
+            school_admins = get_all_admins(school_id=school_id)
 
-        school_admins = [
-            a for a in admins
-            if getattr(a, "school_id", None) == school_id
-        ]
+            if school_admins:
 
-        if school_admins:
+                for a in school_admins:
 
-            for a in school_admins:
+                    with st.container(border=True):
 
-                with st.container(border=True):
+                        st.markdown(f"### 👤 {a.username}")
+                        st.write(f"🆔 ID: {a.id}")
+                        st.write(f"🎭 Role: {a.role}")
 
-                    st.markdown(f"### 👤 {a.username}")
-                    st.write(f"🆔 ID: {a.id}")
-                    st.write(f"🎭 Role: {a.role}")
+                        col1, col2, col3 = st.columns(3)
 
-                    col1, col2, col3 = st.columns(3)
+                        # -------------------------
+                        # 🔑 RESET PASSWORD
+                        # -------------------------
+                        with col1:
 
-                    # -------------------------
-                    # 🔑 RESET PASSWORD
-                    # -------------------------
-                    with col1:
-                        if st.button("🔑 Reset Password", key=f"reset_{a.id}"):
-                            import secrets
-                            temp_password = secrets.token_hex(4)
+                            if st.button(
+                                    "🔑 Reset Password",
+                                    key=f"reset_{a.id}"
+                            ):
 
-                            a.password_hash = hash_password(temp_password)
-                            db.commit()
+                                import secrets
 
-                            st.success(f"New password: {temp_password}")
+                                temp_password = secrets.token_hex(4)
 
+                                db = get_session()
 
-                    # -------------------------
-                    # ✏️ CHANGE ROLE
-                    # -------------------------
-                    with col2:
-                        new_role = st.selectbox(
-                            "Role",
-                            ["admin", "teacher", "moderator"],
-                            index=["admin", "teacher", "moderator"].index(a.role)
-                            if a.role in ["admin", "teacher", "moderator"] else 0,
-                            key=f"role_{a.id}"
-                        )
+                                try:
+                                    admin = db.query(Admin).filter(
+                                        Admin.id == a.id
+                                    ).first()
 
-                        if st.button("💾 Update Role", key=f"role_update_{a.id}"):
-                            a.role = new_role
-                            db.commit()
-                            st.success("Role updated")
-                            st.rerun()
+                                    if admin:
+                                        admin.password_hash = hash_password(
+                                            temp_password
+                                        )
 
+                                        db.commit()
+                                        db.refresh(admin)
 
+                                finally:
+                                    db.close()
 
-                    # -------------------------
-                    # 🗑️ DELETE
-                    # -------------------------
-                    with col3:
-                        if st.button("🗑️ Delete", key=f"del_{a.id}"):
+                                st.success("Password reset successfully.")
+                                st.info(
+                                    f"Temporary password: {temp_password}"
+                                )
 
-                            current_username = st.session_state.get("admin_username")
-                            current_role = st.session_state.get("admin_role")
+                        # -------------------------
+                        # ✏️ CHANGE ROLE
+                        # -------------------------
+                        with col2:
 
-                            # 🚫 Prevent self deletion
-                            if a.username == current_username:
-                                st.toast("🚫 You cannot delete your own account.")
-                                st.stop()
+                            new_role = st.selectbox(
+                                "Role",
+                                ["admin", "teacher", "moderator"],
+                                index=["admin", "teacher", "moderator"].index(a.role)
+                                if a.role in [
+                                    "admin",
+                                    "teacher",
+                                    "moderator"
+                                ] else 0,
+                                key=f"role_{a.id}"
+                            )
 
-                            # 🚫 Prevent deleting super admin
-                            if a.role == "super_admin":
-                                st.toast("🚫 Super Admin cannot be deleted.")
-                                st.stop()
+                            if st.button(
+                                    "💾 Update Role",
+                                    key=f"role_update_{a.id}"
+                            ):
+                                a.role = new_role
+                                db.commit()
 
-                            # 🚫 Admin cannot delete other admins
-                            if current_role == "admin" and a.role == "admin":
-                                st.toast("🚫 You cannot delete another admin.")
-                                st.stop()
+                                st.success("Role updated")
+                                st.rerun()
 
-                            # 🚫 Prevent deleting last admin in school
-                            admin_count = db.query(Admin).filter(
-                                Admin.school_id == school_id,
-                                Admin.role == "admin"
-                            ).count()
+                        # -------------------------
+                        # 🗑️ DELETE
+                        # -------------------------
+                        with col3:
 
+                            if st.button(
+                                    "🗑️ Delete",
+                                    key=f"del_{a.id}"
+                            ):
 
-                            if a.role == "admin" and admin_count <= 1:
-                                st.toast("🚫 Cannot delete the last admin in this school.", icon="🚫")
-                                st.stop()
+                                current_username = st.session_state.get(
+                                    "admin_username"
+                                )
 
-                            # ✅ Safe to delete
-                            db.delete(a)
-                            db.commit()
+                                current_role = st.session_state.get(
+                                    "admin_role"
+                                )
 
-                            st.success("✅ User deleted successfully")
-                            st.rerun()
+                                # 🚫 Prevent self deletion
+                                if a.username == current_username:
+                                    st.toast(
+                                        "🚫 You cannot delete your own account."
+                                    )
+                                    st.stop()
 
+                                # 🚫 Prevent deleting super admin
+                                if a.role == "super_admin":
+                                    st.toast(
+                                        "🚫 Super Admin cannot be deleted."
+                                    )
+                                    st.stop()
+
+                                # 🚫 Admin cannot delete other admins
+                                if (
+                                        current_role == "admin"
+                                        and a.role == "admin"
+                                ):
+                                    st.toast(
+                                        "🚫 You cannot delete another admin."
+                                    )
+                                    st.stop()
+
+                                # 🚫 Prevent deleting last admin
+                                admin_count = db.query(Admin).filter(
+                                    Admin.school_id == school_id,
+                                    Admin.role == "admin"
+                                ).count()
+
+                                if (
+                                        a.role == "admin"
+                                        and admin_count <= 1
+                                ):
+                                    st.toast(
+                                        "🚫 Cannot delete the last admin in this school.",
+                                        icon="🚫"
+                                    )
+                                    st.stop()
+
+                                # ✅ Safe delete
+                                db.delete(a)
+                                db.commit()
+
+                                st.success(
+                                    "✅ User deleted successfully"
+                                )
+
+                                st.rerun()
+
+            else:
+                st.info("No admins found for this school.")
 
             # ----------------------------
             # 🗑️ Delete Admin
@@ -1118,76 +1424,90 @@ def run_admin_mode():
         require_permission("manage_subjects")
         st.subheader("📚 Manage Subjects")
 
-        # Choose class
-        db = get_session()
+        with st.expander("📂 View & Delete Subjects", expanded=False):
 
-        school_id = st.session_state.get("school_id")
+            # Choose class
+            db = get_session()
 
-        try:
-            class_rows = (
-                db.query(Class.id, Class.name)
-                .filter(Class.school_id == school_id)
-                .order_by(Class.name.asc())
+            school_id = st.session_state.get("school_id")
+
+            try:
+                class_rows = (
+                    db.query(Class.id, Class.name)
+                    .filter(Class.school_id == school_id)
+                    .order_by(Class.name.asc())
+                    .all()
+                )
+
+            finally:
+                db.close()
+
+            if not class_rows:
+                st.warning("No classes found for this school.")
+                st.stop()
+
+            # Map name → id
+            class_map = {
+                name: cid
+                for cid, name in class_rows
+            }
+
+            # -------- SELECTBOX --------
+            selected_class_name = st.selectbox(
+                "Select Class",
+                list(class_map.keys()),
+                key="subject_class_select"
+            )
+
+            # ✅ ALWAYS update class_id
+            class_id = class_map[selected_class_name]
+
+            # -------- LOAD SUBJECTS --------
+            db = get_session()
+
+            subjects = (
+                db.query(Subject.id, Subject.name)
+                .filter(
+                    Subject.school_id == school_id,
+                    Subject.class_id == class_id
+                )
+                .order_by(Subject.name.asc())
                 .all()
             )
-        finally:
+
             db.close()
 
+            if subjects:
 
-        if not class_rows:
-            st.warning("No classes found for this school.")
-            st.stop()
+                for i, (subject_id, subject_name) in enumerate(subjects):
 
-        # Map name → id
-        class_map = {name: cid for cid, name in class_rows}
+                    c1, c2 = st.columns([8, 1])
 
-        # -------- SELECTBOX --------
-        selected_class_name = st.selectbox(
-            "Select Class",
-            list(class_map.keys()),
-            key="subject_class_select"
-        )
+                    c1.write(f"{i + 1}. {subject_name}")
 
-        # Resolve ID safely
+                    if c2.button(
+                            "🗑️",
+                            key=f"del_subject_{subject_id}"
+                    ):
 
-        if "selected_class_id" not in st.session_state:
-            st.session_state.selected_class_id = class_map[selected_class_name]
+                        deleted = delete_subject(
+                            subject_id=subject_id,
+                            class_id=class_id,
+                            school_id=school_id,
+                        )
 
-        class_id = st.session_state.selected_class_id
-        # -------- LOAD SUBJECTS --------
-        db = get_session()
+                        if deleted:
+                            st.success("✅ Subject deleted.")
+                            st.rerun()
 
-        school_id = st.session_state.get("school_id")
-        subjects = (
-            db.query(Subject.id, Subject.name)
-            .filter(
-                Subject.school_id == school_id,
-                Subject.class_id == class_id
-            )
-            .order_by(Subject.name.asc())
-            .all()
-        )
+                        else:
+                            st.warning(
+                                "⚠️ Subject could not be deleted."
+                            )
 
-        db.close()
+            else:
+                st.info("No subjects found for this class.")
 
-
-        if subjects:
-            for i, (subject_id, subject_name) in enumerate(subjects):
-                c1, c2 = st.columns([8, 1])
-                c1.write(f"{i + 1}. {subject_name}")
-
-                if c2.button("🗑️", key=f"del_subject_{subject_id}"):
-                    deleted = delete_subject(
-                        subject_id=subject_id,
-                        class_id=class_id,  # ✅ correct
-                        school_id=school_id,
-                    )
-
-                    if deleted:
-                        st.success("✅ Subject deleted.")
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ Subject could not be deleted.")
 
         st.markdown("---")
         new_subject = st.text_input("➕ Add New Subject", key="new_subject_input")
@@ -1568,318 +1888,313 @@ def run_admin_mode():
 
         st.divider()
 
-        # =====================================================
-        # ➕ ADD SINGLE QUESTION
-        # =====================================================
-        st.markdown("### ➕ Add Single Question")
+        with st.expander("✍️ Subjective Question Management", expanded=False):
 
-        question_text = st.text_area(
-            "Question",
-            key="subjective_single_text"
-        )
+            # =====================================================
+            # ➕ ADD SINGLE QUESTION
+            # =====================================================
+            st.markdown("### ➕ Add Single Question")
 
-        marks = st.number_input(
-            "Marks",
-            1,
-            100,
-            10,
-            key="subjective_single_marks"
-        )
+            question_text = st.text_area(
+                "Question",
+                key="subjective_single_text"
+            )
 
-        if st.button("Save Question", key="subjective_save"):
+            marks = st.number_input(
+                "Marks",
+                1,
+                100,
+                10,
+                key="subjective_single_marks"
+            )
 
-            if not question_text.strip():
-                st.error("Question required.")
-                st.stop()
+            if st.button(
+                    "Save Question",
+                    key="subjective_save"
+            ):
 
-            db = get_session()
-
-            try:
-                db.add(
-                    SubjectiveQuestion(
-                        school_id=school_id,
-                        class_id=class_id,
-                        subject_id=subject_id,
-                        question_text=question_text.strip(),
-                        marks=int(marks)
-                    )
-                )
-
-                db.commit()
-
-                st.success("Question saved.")
-                st.rerun()
-
-            except Exception as e:
-                db.rollback()
-                st.error(f"Failed: {e}")
-
-            finally:
-                db.close()
-
-        # =====================================================
-        # ✍️ Bulk Upload Subjective Questions (CSV/Text)
-        # =====================================================
-        st.markdown("### 📤 Bulk Upload")
-
-        uploaded_file = st.file_uploader(
-            "Upload CSV (column 'question_text')",
-            type=["csv"],
-            key="subjective_csv"
-        )
-
-        bulk_text = st.text_area(
-            "Or paste numbered questions",
-            height=200,
-            key="subjective_text"
-        )
-
-        if st.button("Upload Questions", key="subjective_upload"):
-
-            cleaned_subjective = []
-
-            # -------------------------
-            # CSV MODE
-            # -------------------------
-            if uploaded_file:
-
-                try:
-
-                    # -------------------------
-                    # SAFE CSV READ
-                    # -------------------------
-                    df = pd.read_csv(
-
-                        uploaded_file,
-
-                        dtype=str,
-
-                        keep_default_na=False,
-
-                        encoding="utf-8",
-
-                        on_bad_lines="skip"
-
-                    )
-
-                    st.info(
-                        f"CSV rows read: {len(df)}"
-                    )
-
-                    if df.empty:
-                        st.error(
-                            "CSV is empty."
-                        )
-
-                        st.stop()
-
-                    # -------------------------
-                    # AUTO FIX COLUMN
-                    # -------------------------
-                    if "question_text" not in df.columns:
-                        first_col = df.columns[0]
-
-                        st.warning(
-                            f"'question_text' column not found, using: '{first_col}'"
-                        )
-
-                        df.rename(
-
-                            columns={
-                                first_col: "question_text"
-                            },
-
-                            inplace=True
-
-                        )
-
-                    # -------------------------
-                    # PROCESS ROWS
-                    # -------------------------
-                    for idx, row in df.iterrows():
-
-                        q_text = str(
-                            row.get(
-                                "question_text",
-                                ""
-                            )
-                        ).strip()
-
-                        # -------------------------
-                        # SKIP BAD ROWS
-                        # -------------------------
-                        if (
-                                not q_text
-                                or q_text.lower() == "nan"
-                                or len(q_text) < 15
-                        ):
-                            continue
-
-                        # -------------------------
-                        # FIX MULTILINE TEXT
-                        # -------------------------
-                        q_text = " ".join(
-                            q_text.splitlines()
-                        ).strip()
-
-                        # -------------------------
-                        # MARKS
-                        # -------------------------
-                        try:
-
-                            marks_val = int(
-                                row.get("marks", 10)
-                            )
-
-                        except Exception:
-
-                            marks_val = 10
-
-                        # -------------------------
-                        # SAVE CLEAN QUESTION
-                        # -------------------------
-                        cleaned_subjective.append({
-
-                            "question": q_text,
-
-                            "marks": marks_val
-
-                        })
-
-                except Exception as e:
-
-                    st.error(
-                        f"CSV error: {e}"
-                    )
-
+                if not question_text.strip():
+                    st.error("Question required.")
                     st.stop()
 
-            # -------------------------
-            # TEXT MODE
-            # -------------------------
-            elif bulk_text.strip():
-
-                import re
-
-                lines = bulk_text.splitlines()
-
-                current_question = ""
-
-                for line in lines:
-
-                    line = line.strip()
-
-                    if not line:
-                        continue
-
-                    # -------------------------
-                    # NEW QUESTION
-                    # -------------------------
-                    if re.match(r"^\d+\.", line):
-
-                        # SAVE PREVIOUS
-                        if current_question.strip():
-                            cleaned_subjective.append({
-                                "question": current_question.strip(),
-                                "marks": 10
-                            })
-
-                        current_question = line
-
-                    # -------------------------
-                    # CONTINUATION LINE
-                    # -------------------------
-                    else:
-
-                        current_question += " " + line
-
-                # -------------------------
-                # SAVE LAST QUESTION
-                # -------------------------
-                if current_question.strip():
-                    cleaned_subjective.append({
-                        "question": current_question.strip()
-                    })
-
-            # -------------------------
-            # 🔍 DUPLICATE CHECK
-            # -------------------------
-            existing_subj_text = {
-                q.question_text.lower()
-                for q in get_subjective_questions(
-                    class_id=class_id,
-                    subject_id=subject_id,
-                    school_id=school_id
-                )
-            }
-
-            duplicates = [
-                q["question"]
-                for q in cleaned_subjective
-                if q["question"].lower() in existing_subj_text
-            ]
-
-            if duplicates:
-                st.warning(f"⚠️ {len(duplicates)} duplicate(s) skipped.")
-                for dq in duplicates[:10]:  # limit spam
-                    st.text(f"• {dq}")
-
-            cleaned_subjective = [
-                q for q in cleaned_subjective
-                if q["question"].lower() not in existing_subj_text
-            ]
-
-            # -------------------------
-            # 💾 SAVE TO DB
-            # -------------------------
-            if cleaned_subjective:
-
- 
                 db = get_session()
 
                 try:
-                    count = 0
 
-                    for q in cleaned_subjective:
-                        st.write("INSERTING:", q)
-
-                        db.add(
-                            SubjectiveQuestion(
-                                school_id=school_id,
-                                class_id=class_id,
-                                subject_id=subject_id,
-                                question_text=q["question"],
-                                marks=int(q.get("marks", 10))
-                            )
+                    db.add(
+                        SubjectiveQuestion(
+                            school_id=school_id,
+                            class_id=class_id,
+                            subject_id=subject_id,
+                            question_text=question_text.strip(),
+                            marks=int(marks)
                         )
-
-                        count += 1
-
-                    st.write("ABOUT TO COMMIT")
+                    )
 
                     db.commit()
 
-                    st.write("COMMIT SUCCESS")
-
-                    # ✅ SAFE DISPLAY (no stale names)
-                    st.success(
-                        f"🎯 Uploaded {count} new subjective question(s) "
-                        f"for {class_lookup[class_id]} - {subject_lookup[subject_id]}."
-                    )
-
+                    st.success("Question saved.")
                     st.rerun()
 
                 except Exception as e:
 
                     db.rollback()
-
-                    st.error(f"Upload failed: {e}")
+                    st.error(f"Failed: {e}")
 
                 finally:
                     db.close()
-            else:
-                st.info("⚠️ No new questions to upload.")
 
+            # =====================================================
+            # 📤 BULK UPLOAD
+            # =====================================================
+            st.markdown("---")
+            st.markdown("### 📤 Bulk Upload")
+
+            uploaded_file = st.file_uploader(
+                "Upload CSV (column 'question_text')",
+                type=["csv"],
+                key="subjective_csv"
+            )
+
+            bulk_text = st.text_area(
+                "Or paste numbered questions",
+                height=200,
+                key="subjective_text"
+            )
+
+            if st.button(
+                    "Upload Questions",
+                    key="subjective_upload"
+            ):
+
+                cleaned_subjective = []
+
+                # -------------------------
+                # CSV MODE
+                # -------------------------
+                if uploaded_file:
+
+                    try:
+
+                        df = pd.read_csv(
+                            uploaded_file,
+                            dtype=str,
+                            keep_default_na=False,
+                            encoding="utf-8",
+                            on_bad_lines="skip"
+                        )
+
+                        st.info(f"CSV rows read: {len(df)}")
+
+                        if df.empty:
+                            st.error("CSV is empty.")
+                            st.stop()
+
+                        # -------------------------
+                        # AUTO FIX COLUMN
+                        # -------------------------
+                        if "question_text" not in df.columns:
+                            first_col = df.columns[0]
+
+                            st.warning(
+                                f"'question_text' column not found, using: '{first_col}'"
+                            )
+
+                            df.rename(
+                                columns={
+                                    first_col: "question_text"
+                                },
+                                inplace=True
+                            )
+
+                        # -------------------------
+                        # PROCESS ROWS
+                        # -------------------------
+                        for idx, row in df.iterrows():
+
+                            q_text = str(
+                                row.get(
+                                    "question_text",
+                                    ""
+                                )
+                            ).strip()
+
+                            # -------------------------
+                            # SKIP BAD ROWS
+                            # -------------------------
+                            if (
+                                    not q_text
+                                    or q_text.lower() == "nan"
+                                    or len(q_text) < 15
+                            ):
+                                continue
+
+                            # -------------------------
+                            # FIX MULTILINE TEXT
+                            # -------------------------
+                            q_text = " ".join(
+                                q_text.splitlines()
+                            ).strip()
+
+                            # -------------------------
+                            # MARKS
+                            # -------------------------
+                            try:
+
+                                marks_val = int(
+                                    row.get("marks", 10)
+                                )
+
+                            except Exception:
+
+                                marks_val = 10
+
+                            cleaned_subjective.append({
+                                "question": q_text,
+                                "marks": marks_val
+                            })
+
+                    except Exception as e:
+
+                        st.error(f"CSV error: {e}")
+                        st.stop()
+
+                # -------------------------
+                # TEXT MODE
+                # -------------------------
+                elif bulk_text.strip():
+
+                    import re
+
+                    lines = bulk_text.splitlines()
+
+                    current_question = ""
+
+                    for line in lines:
+
+                        line = line.strip()
+
+                        if not line:
+                            continue
+
+                        # -------------------------
+                        # NEW QUESTION
+                        # -------------------------
+                        if re.match(r"^\d+\.", line):
+
+                            if current_question.strip():
+                                cleaned_subjective.append({
+                                    "question": current_question.strip(),
+                                    "marks": 10
+                                })
+
+                            current_question = line
+
+                        # -------------------------
+                        # CONTINUATION LINE
+                        # -------------------------
+                        else:
+
+                            current_question += " " + line
+
+                    # -------------------------
+                    # SAVE LAST QUESTION
+                    # -------------------------
+                    if current_question.strip():
+                        cleaned_subjective.append({
+                            "question": current_question.strip(),
+                            "marks": 10
+                        })
+
+                # -------------------------
+                # 🔍 DUPLICATE CHECK
+                # -------------------------
+                existing_subj_text = {
+
+                    q.question_text.lower()
+
+                    for q in get_subjective_questions(
+                        class_id=class_id,
+                        subject_id=subject_id,
+                        school_id=school_id
+                    )
+                }
+
+                duplicates = [
+
+                    q["question"]
+
+                    for q in cleaned_subjective
+
+                    if q["question"].lower()
+                       in existing_subj_text
+                ]
+
+                if duplicates:
+
+                    st.warning(
+                        f"⚠️ {len(duplicates)} duplicate(s) skipped."
+                    )
+
+                    for dq in duplicates[:10]:
+                        st.text(f"• {dq}")
+
+                cleaned_subjective = [
+
+                    q for q in cleaned_subjective
+
+                    if q["question"].lower()
+                       not in existing_subj_text
+                ]
+
+                # -------------------------
+                # 💾 SAVE TO DB
+                # -------------------------
+                if cleaned_subjective:
+
+                    db = get_session()
+
+                    try:
+
+                        count = 0
+
+                        for q in cleaned_subjective:
+                            db.add(
+                                SubjectiveQuestion(
+                                    school_id=school_id,
+                                    class_id=class_id,
+                                    subject_id=subject_id,
+                                    question_text=q["question"],
+                                    marks=int(q.get("marks", 10))
+                                )
+                            )
+
+                            count += 1
+
+                        db.commit()
+
+                        st.success(
+                            f"🎯 Uploaded {count} new subjective "
+                            f"question(s) for "
+                            f"{class_lookup[class_id]} - "
+                            f"{subject_lookup[subject_id]}."
+                        )
+
+                        st.rerun()
+
+                    except Exception as e:
+
+                        db.rollback()
+
+                        st.error(
+                            f"Upload failed: {e}"
+                        )
+
+                    finally:
+                        db.close()
+
+                else:
+                    st.info("⚠️ No new questions to upload.")
 
 
 
@@ -1887,7 +2202,6 @@ def run_admin_mode():
     # ✍️ Review Subjective Questions
     # FINAL STABLE VERSION
     # =====================================================
-
     elif selected_tab == "✍️ Review Subj Questions":
 
         import json
@@ -2049,126 +2363,209 @@ def run_admin_mode():
 
                 st.stop()
 
+
+
             # ---------------------------------
             # RENDER FILTERED RESULTS
             # ---------------------------------
 
-            for sub in filtered_submissions:
+            with st.expander(
+                    f"📂 Filtered Results ({len(filtered_submissions)})",
+                    expanded=True
+            ):
 
-                student_name = getattr(
-                    sub.student,
-                    "name",
-                    f"Student {sub.student_id}"
-                )
+                for sub in filtered_submissions:
 
-                subject_name = getattr(
-                    sub.subject,
-                    "name",
-                    "Unknown"
-                )
-
-                review_status = (
-                        sub.review_status or "pending"
-                )
-
-                is_reviewed = (
-                        review_status == "reviewed"
-                )
-
-                icon = (
-                    "✅ Reviewed"
-                    if is_reviewed
-                    else "🟡 Pending"
-                )
-
-                with st.expander(
-                        f"{icon} | 👤 {student_name} | 📘 {subject_name}",
-                        expanded=not is_reviewed
-                ):
-
-                    answers = parse_json_field(
-                        sub.answers
+                    student_name = getattr(
+                        sub.student,
+                        "name",
+                        f"Student {sub.student_id}"
                     )
 
-                    normalized_answers = []
+                    subject_name = getattr(
+                        sub.subject,
+                        "name",
+                        "Unknown"
+                    )
 
-                    for idx, item in enumerate(answers):
+                    review_status = (
+                            sub.review_status
+                            or "pending"
+                    )
 
-                        # plain string answer
-                        if isinstance(item, str):
+                    is_reviewed = (
+                            review_status
+                            == "reviewed"
+                    )
 
-                            normalized_answers.append({
+                    icon = (
+                        "✅ Reviewed"
+                        if is_reviewed
+                        else "🟡 Pending"
+                    )
 
-                                "question":
-                                    f"Question {idx + 1}",
+                    with st.expander(
+                            f"{icon} | 👤 {student_name} | 📘 {subject_name}",
+                            expanded=not is_reviewed
+                    ):
 
-                                "answer":
-                                    item
-                            })
-                        elif isinstance(item, dict):
+                        # ---------------------------------
+                        # LOAD ANSWERS
+                        # ---------------------------------
 
-                            question = item.get(
-                                "question"
-                            ) or item.get(
-                                "question_text"
-                            ) or f"Question {idx + 1}"
+                        answers = parse_json_field(
+                            sub.answers
+                        )
 
-                            answer = ""
+                        if not isinstance(answers, list):
+                            answers = []
 
-                            # old format
-                            if "answer" in item:
+                        # ---------------------------------
+                        # NORMALIZE ANSWERS
+                        # ---------------------------------
 
-                                answer = item["answer"]
+                        normalized_answers = []
 
-                            # nested selected structure
-                            elif isinstance(
-                                    item.get("selected"),
-                                    dict
+                        for idx, item in enumerate(answers):
+
+                            # -------------------------
+                            # Plain string answer
+                            # -------------------------
+
+                            if isinstance(item, str):
+
+                                normalized_answers.append({
+
+                                    "question":
+                                        f"Question {idx + 1}",
+
+                                    "answer":
+                                        item
+
+                                })
+
+                            # -------------------------
+                            # Dict answer
+                            # -------------------------
+
+                            elif isinstance(item, dict):
+
+                                question = (
+                                        item.get("question")
+                                        or item.get("question_text")
+                                        or f"Question {idx + 1}"
+                                )
+
+                                answer = ""
+
+                                # old structure
+                                if "answer" in item:
+
+                                    answer = item.get(
+                                        "answer",
+                                        ""
+                                    )
+
+                                # nested selected dict
+                                elif isinstance(
+                                        item.get("selected"),
+                                        dict
+                                ):
+
+                                    answer = item[
+                                        "selected"
+                                    ].get(
+                                        "selected",
+                                        "No answer"
+                                    )
+
+                                # selected string
+                                elif isinstance(
+                                        item.get("selected"),
+                                        str
+                                ):
+
+                                    answer = item.get(
+                                        "selected",
+                                        ""
+                                    )
+
+                                normalized_answers.append({
+
+                                    "question":
+                                        question,
+
+                                    "answer":
+                                        answer or "No answer"
+
+                                })
+
+                        # ---------------------------------
+                        # FINAL NORMALIZED PAYLOAD
+                        # ---------------------------------
+
+                        answers = normalized_answers
+
+                        # ---------------------------------
+                        # ATTACHMENTS
+                        # ---------------------------------
+
+                        attachments = parse_json_field(
+                            sub.attachments
+                        )
+
+                        # ---------------------------------
+                        # UI
+                        # ---------------------------------
+
+                        st.markdown(
+                            "### 📄 Student Answers"
+                        )
+
+                        scores = {}
+
+                        if not answers:
+
+                            st.info("No answers submitted.")
+
+                        else:
+
+                            for idx, item in enumerate(
+                                    answers,
+                                    start=1
                             ):
+                                question = item.get(
+                                    "question",
+                                    f"Question {idx}"
+                                )
 
-                                answer = item[
-                                    "selected"
-                                ].get(
-                                    "selected",
+                                answer = item.get(
+                                    "answer",
                                     "No answer"
                                 )
 
-                            # direct selected string
-                            elif isinstance(
-                                    item.get("selected"),
-                                    str
-                            ):
-
-                                answer = item[
-                                    "selected"
-                                ]
-
-                            normalized_answers.append({
-
-                                "question":
-                                    question,
-
-                                "answer":
-                                    answer or "No answer"
-
-                            })
-
-                    answers = normalized_answers
-                    attachments = parse_json_field(
-                        sub.attachments
-                    )
-
-                    st.markdown(
-                        "### 📄 Student Answers"
-                    )
+                                st.markdown(
+                                    f"""
+                                    <div style="
+                                        padding:10px;
+                                        border-radius:10px;
+                                        border:1px solid #d1d5db;
+                                        margin-bottom:10px;
+                                        background:#f9fafb;
+                                    ">
+                                        <b>Q{idx}:</b> {question}
+                                        <hr>
+                                        <b>Answer:</b><br>
+                                        {answer}
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
 
                     scores = {}
 
                     if not answers:
-
-                        st.write(
-                            "_No answers submitted_"
-                        )
+                        st.info("No answers submitted.")
 
                     else:
 
@@ -2251,23 +2648,18 @@ def run_admin_mode():
 
                         for file in attachments:
 
-                            if isinstance(
-                                    file,
-                                    dict
-                            ):
+                            if isinstance(file, dict):
 
-                                st.write(
-                                    file.get(
-                                        "name",
-                                        str(file)
-                                    )
+                                st.markdown(
+                                    f"📎 {file.get('name', str(file))}"
                                 )
 
                             else:
 
-                                st.write(
-                                    str(file)
+                                st.markdown(
+                                    f"📎 {str(file)}"
                                 )
+
 
                     # -------------------------
                     # REVIEWED VIEW
@@ -2682,7 +3074,31 @@ def run_admin_mode():
                         # -------------------------
                         if question_type == "Objective":
 
-                            options = getattr(q, "options", [])
+                            # Safe correct answer extraction
+                            if isinstance(q, dict):
+                                correct_answer = q.get(
+                                    "correct_answer",
+                                    "Not set"
+                                )
+                            else:
+                                correct_answer = getattr(
+                                    q,
+                                    "correct_answer",
+                                    "Not set"
+                                )
+
+                            # Safe options extraction
+                            if isinstance(q, dict):
+                                options = q.get(
+                                    "options",
+                                    []
+                                )
+                            else:
+                                options = getattr(
+                                    q,
+                                    "options",
+                                    []
+                                )
 
                             if isinstance(options, str):
 
@@ -2693,17 +3109,14 @@ def run_admin_mode():
                                     options = []
 
                             if options:
-
-                                st.markdown("**Options:**")
-
-                                for opt in options:
-                                    st.write(f"- {opt}")
-
-                            correct_answer = getattr(
-                                q,
-                                "correct_answer",
-                                ""
-                            )
+                                st.markdown(
+                                    "\n".join(
+                                        [
+                                            f"- {opt}"
+                                            for opt in options
+                                        ]
+                                    )
+                                )
 
                             st.success(
                                 f"Correct Answer: {correct_answer}"
@@ -2917,7 +3330,7 @@ def run_admin_mode():
                 for q in questions:
                     with st.expander(f"Q{q.id}: {q.question_text[:70]}..."):
 
-                        st.write(f"**Answer:** {q.correct_answer}")
+                        st.markdown(f"**Answer:** {q.correct_answer}")
 
                         if getattr(q, "submissions", None):
                             st.warning("⚠️ Cannot archive — has submissions.")
@@ -2952,7 +3365,7 @@ def run_admin_mode():
                 for aq in archived_questions:
                     with st.expander(f"Q{aq.id}: {aq.question_text[:70]}..."):
 
-                        st.write(f"**Answer:** {aq.correct_answer}")
+                        st.markdown(f"**Correct Answer:** {aq.correct_answer}")
 
                         if st.button(f"♻️ Restore Q{aq.id}", key=f"restore_q_{aq.id}"):
 
@@ -3238,7 +3651,7 @@ def run_admin_mode():
                 if top_n != "All":
                     df_sub = df_sub.head(int(top_n))
 
-                st.write(f"### 🧠 {subject_name} Leaderboard")
+                st.markdown(f"### 🧠 {subject_name} Leaderboard")
 
                 st.dataframe(
                     df_sub.drop(columns=["Subject ID"]),
@@ -3676,7 +4089,7 @@ def run_admin_mode():
             students = get_users(school_id=current_school_id)
 
             students_df = pd.DataFrame(students.values()) if students else pd.DataFrame()
-            st.write(f"👥 Students: {len(students_df)} records")
+            st.markdown(f"👥 **Students:** {len(students_df)} records")
 
             # ====================================================
             # ❓ QUESTIONS (SCOPED)
@@ -3700,7 +4113,7 @@ def run_admin_mode():
                 for q in questions
             ]) if questions else pd.DataFrame()
 
-            st.write(f"❓ Questions: {len(questions_df)} records")
+            st.metric(label="Questions", value=len(questions_df))
 
             # ====================================================
             # 📝 SUBMISSIONS (SCOPED)

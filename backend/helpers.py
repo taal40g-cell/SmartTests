@@ -1,14 +1,12 @@
 import streamlit as st
 from backend.database import get_session
-
-# -----------------------------------------------------
-# Add a new subjective question
-# -----------------------------------------------------
-from backend.models import SubjectiveQuestion,AntiCheatLog,StudentProgress, StudentAnswer,TestResult
+from backend.models import ObjectiveQuestion
+from backend.models import SubjectiveQuestion,AntiCheatLog,TestResult
+from backend.db_helpers import save_progress
+from backend.db_helpers import calculate_score_db
 # ======================================================
 # 🧠 SUBJECTIVE TEST HELPERS
 # ======================================================
-
 def add_subjective_question(school_id, class_name, subject_id, question_text, marks=10):
     """Admin adds a new subjective question."""
 # ✅ adjust path if different
@@ -34,7 +32,9 @@ def add_subjective_question(school_id, class_name, subject_id, question_text, ma
         db.close()
 
 
-
+# =====================================================
+#
+# =====================================================
 def get_subjective_questions(class_id, subject_id, school_id):
     """Return all subjective questions for a class + subject + school"""
 
@@ -59,85 +59,11 @@ def get_subjective_questions(class_id, subject_id, school_id):
 
 
 
-def submit_subjective_answer(
-    school_id,
-    student_id,
-    access_code,
-    class_id,
-    subject_id,
-    question_id,
-    answer_text
-):
-    """Student submits an answer to a subjective question."""
-
-    db = get_session()
-
-    try:
-        # 1️⃣ Find existing progress record
-        progress = (
-            db.query(StudentProgress)
-            .filter(
-                StudentProgress.student_id == student_id,
-                StudentProgress.school_id == school_id,
-                StudentProgress.class_id == class_id,
-                StudentProgress.subject_id == subject_id
-            )
-            .first()
-        )
-
-        # 2️⃣ Create progress if it does not exist
-        if not progress:
-            progress = StudentProgress(
-                student_id=student_id,
-                school_id=school_id,
-                class_id=class_id,
-                subject_id=subject_id,
-                access_code=access_code,
-                submitted=False,
-                review_status="pending",
-                locked=False,
-                created_at=datetime.utcnow()
-            )
-            db.add(progress)
-            db.flush()
-
-        # 3️⃣ Prevent duplicate answer for the same question
-        existing = (
-            db.query(StudentAnswer)
-            .filter(
-                StudentAnswer.progress_id == progress.id,
-                StudentAnswer.question_id == question_id
-            )
-            .first()
-        )
-
-        if existing:
-            # Update answer instead of inserting duplicate
-            existing.answer = answer_text
-            db.commit()
-            return True, "✏️ Answer updated."
-
-        # 4️⃣ Insert new answer
-        new_answer = StudentAnswer(
-            progress_id=progress.id,
-            question_id=question_id,
-            answer=answer_text
-        )
-
-        db.add(new_answer)
-        db.commit()
-
-        return True, "✅ Answer submitted successfully."
-
-    except Exception as e:
-        db.rollback()
-        return False, f"❌ Submission failed: {e}"
-
-    finally:
-        db.close()
 
 
-
+# =====================================================
+#
+# =====================================================
 def grade_subjective_answer(school_id, answer_id, teacher_id, score, comment=""):
     """Teacher grades a student's subjective answer."""
     from models import SubjectiveGrade
@@ -169,44 +95,8 @@ def grade_subjective_answer(school_id, answer_id, teacher_id, score, comment="")
     finally:
         db.close()
 
-def get_student_subjective_results(student_id, school_id, class_id=None):
-    """Fetch a student's graded subjective answers with questions."""
 
-    from backend.models import (
-        StudentAnswer,
-        StudentProgress,
-        SubjectiveQuestion,
-        SubjectiveGrade
-    )
-    from sqlalchemy.orm import joinedload
-    from sqlalchemy import and_
 
-    db = get_session()
-
-    try:
-        query = (
-            db.query(StudentAnswer, SubjectiveQuestion, SubjectiveGrade)
-            .join(StudentProgress, StudentAnswer.progress_id == StudentProgress.id)
-            .join(SubjectiveQuestion, StudentAnswer.question_id == SubjectiveQuestion.id)
-            .outerjoin(SubjectiveGrade, SubjectiveGrade.answer_id == StudentAnswer.id)
-            .filter(
-                and_(
-                    StudentProgress.student_id == student_id,
-                    StudentProgress.school_id == school_id
-                )
-            )
-            .options(joinedload(StudentAnswer.question))
-        )
-
-        # Optional class filtering
-        if class_id:
-            query = query.filter(StudentProgress.class_id == class_id)
-
-        results = query.all()
-        return results
-
-    finally:
-        db.close()
 
 
 # =============================================
@@ -316,78 +206,13 @@ def save_student_answers(access_code, subject, questions, answers):
 
     finally:
         db.close()
-# =============================================
-# SAVE: Subjective Submission (StudentProgress)
-# =============================================
-def save_subjective_submission(
-    student_id: int,
-    school_id: int,
-    subject_id: int,
-    answers: dict,
-    questions: list
-):
-    """
-    Save or update a subjective submission inside StudentProgress.
-    Stored as plain text.
-    """
-    from backend.models import StudentProgress
-    db = get_session()
-
-    try:
-        # Convert dict to plain text format
-        answers_text = "\n".join(
-            [f"Q{idx + 1}: {answers.get(idx, '')}" for idx in range(len(questions))]
-        )
-
-        # Check existing progress
-        existing = db.query(StudentProgress).filter_by(
-            student_id=student_id,
-            school_id=school_id,
-            subject_id=subject_id,
-            test_type="subjective"
-        ).first()
-
-        if existing:
-            existing.answers = answers_text
-            existing.questions = str(questions)
-            existing.submitted = True
-            existing.score = None
-            existing.percent = None
-            existing.review_status = "Pending Review"
-            db.commit()
-            db.refresh(existing)
-            return existing.id
-
-        # Create new progress row
-        new_progress = StudentProgress(
-            student_id=student_id,
-            school_id=school_id,
-            subject_id=subject_id,
-            test_type="subjective",
-            answers=answers_text,
-            questions=str(questions),
-            submitted=True,
-            score=None,
-            percent=None,
-            review_status="Pending Review"
-        )
-
-        db.add(new_progress)
-        db.commit()
-        db.refresh(new_progress)
-        return new_progress.id
-
-    except Exception as e:
-        db.rollback()
-        print(f"❌ Failed to save subjective submission: {e}")
-        return None
-
-    finally:
-        db.close()
 
 
 
 
+# -----------------------------------------------------
+#
+# -----------------------------------------------------
 def handle_subjective_submission(
     student_id,
     school_id,
@@ -469,10 +294,10 @@ def handle_subjective_submission(
         db.close()
 
 
+    # =========================================
+    #
+    # =========================================
 
-
-
-from backend.models import ObjectiveQuestion
 def get_objective_questions(class_id: int, subject_id: int, school_id: int | None = None):
     """Fetch all active objective questions for a given class and subject."""
     db = get_session()
@@ -489,7 +314,9 @@ def get_objective_questions(class_id: int, subject_id: int, school_id: int | Non
 
 
 
-
+# =========================================
+#
+# =========================================
 def render_subjective_test(questions, subject):
     """Render one-question-per-page subjective test with compact buttons."""
     st.markdown(
@@ -613,222 +440,13 @@ def render_subjective_test(questions, subject):
 
 
 
-# backend/db_helpers.py
-def handle_uploaded_subjective_questions(
-    class_id: int,
-    subject_id: int,
-    valid_questions: list,
-    school_id: int | None = None,
-):
-    """
-    Save subjective questions into the database, skipping duplicates.
-
-    Args:
-        class_id (int): Class ID
-        subject_id (int): Subject ID
-        valid_questions (list): List of dicts {"question": str, "marks": int (optional)}
-        school_id (int | None): School ID for multi-school setup
-
-    Returns:
-        dict: {
-            "success": bool,
-            "inserted": int,
-            "duplicates": int,
-            "error": str (optional)
-        }
-    """
-    if not valid_questions:
-        return {"success": False, "error": "No questions provided."}
-
-    db = get_session()
-    inserted_count = 0
-    duplicates_count = 0
-
-    try:
-        # Fetch existing question texts for this class/subject/school
-        existing_texts = {
-            q.question_text.lower()
-            for q in db.query(SubjectiveQuestion)
-            .filter(
-                SubjectiveQuestion.class_id == class_id,
-                SubjectiveQuestion.subject_id == subject_id,
-                SubjectiveQuestion.school_id == school_id,
-            )
-            .all()
-        }
-
-        new_records = []
-
-        for q in valid_questions:
-            question_text = q.get("question", "").strip()
-            marks = int(q.get("marks", 10))
-
-            if not question_text:
-                continue
-
-            if question_text.lower() in existing_texts:
-                duplicates_count += 1
-                continue  # skip duplicate
-
-            new_records.append(
-                SubjectiveQuestion(
-                    school_id=school_id,
-                    class_id=class_id,
-                    subject_id=subject_id,
-                    question_text=question_text,
-                    marks=marks,
-                )
-            )
-
-        if not new_records and duplicates_count > 0:
-            return {
-                "success": True,
-                "inserted": 0,
-                "duplicates": duplicates_count,
-                "error": None,
-            }
-
-        if new_records:
-            db.add_all(new_records)
-            db.commit()
-            inserted_count = len(new_records)
-
-        return {
-            "success": True,
-            "inserted": inserted_count,
-            "duplicates": duplicates_count,
-            "error": None,
-        }
-
-    except Exception as e:
-        db.rollback()
-        return {"success": False, "error": str(e)}
-
-    finally:
-        db.close()
 
 
 
 
-
-def load_objective_questions_direct(class_id: int, subject_id: int, school_id: int | None = None):
-    """
-    Load all objective questions for a given class and subject.
-
-    Args:
-        class_id (int): ID of the class.
-        subject_id (int): ID of the subject.
-        school_id (int | None): Optional school ID.
-
-    Returns:
-        List[ObjectiveQuestion]: List of objective questions.
-    """
-    db = get_session()
-    try:
-        query = db.query(ObjectiveQuestion).filter(
-            ObjectiveQuestion.class_id == class_id,
-            ObjectiveQuestion.subject_id == subject_id,
-        )
-
-        if school_id is not None:
-            query = query.filter(ObjectiveQuestion.school_id == school_id)
-
-        return query.order_by(ObjectiveQuestion.id.asc()).all()
-    finally:
-        db.close()
-
-
-
-
-def highlight_score(val):
-    """
-    Apply background color based on score percentage string.
-    Example: "85%" -> green, "60%" -> yellow, "45%" -> red.
-    """
-    if not isinstance(val, str):
-        return ''  # Only process strings
-
-    try:
-        num = float(val.strip().rstrip('%'))
-    except (ValueError, TypeError):
-        return ''  # Invalid or non-numeric input safely ignored
-
-    if num >= 70:
-        color = '#a6f1a6'  # Green for good
-    elif num >= 50:
-        color = '#fff6a6'  # Yellow for average
-    else:
-        color = '#f7a6a6'  # Red for poor
-
-    return f'background-color: {color}'
-
-
-
-
-def normalize_question(q):
-    """
-    Converts a Question object into a JSON-serializable dict
-    and cleans the options field so it never contains quotes,
-    parentheses, or multiline mess.
-    """
-
-    def clean_options(options):
-        if not options:
-            return []
-
-        # only a single string in the list?
-        if isinstance(options, list) and len(options) == 1 and isinstance(options[0], str):
-            return [o.strip() for o in options[0].split("\n") if o.strip()]
-
-        # raw single string
-        if isinstance(options, str):
-            return [o.strip() for o in options.split("\n") if o.strip()]
-
-        # already a list of strings
-        return [o.strip() for o in options if isinstance(o, str) and o.strip()]
-
-    # If q is already a dict, return it (but clean options)
-    if isinstance(q, dict):
-        if "options" in q:
-            q["options"] = clean_options(q["options"])
-        return q
-
-    return {
-        "id": q.id,
-
-        "text": (
-                getattr(q, "question_text", None)
-                or getattr(q, "text", "")
-        ),
-
-        "options": clean_options(
-            getattr(q, "options", [])
-        ),
-
-        "category": getattr(q, "category", None),
-
-        "difficulty": getattr(q, "difficulty", None),
-    }
-from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
-
-def assert_db_alive():
-    try:
-        db = get_session()
-        db.execute(text("SELECT 1"))
-        db.close()
-    except OperationalError:
-        st.error(
-            "🚨 Database is offline or unreachable.\n\n"
-            "Wait 1–2 minutes and refresh.\n"
-            "If this persists, the server is asleep."
-        )
-        st.stop()
-
-
-
-from backend.db_helpers import save_progress
-from backend.db_helpers import calculate_score_db
+# =========================================
+#
+# =========================================
 def force_submit_test(reason="Violation detected"):
     """
     Force-submit the current test session.

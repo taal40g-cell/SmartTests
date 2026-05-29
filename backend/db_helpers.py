@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional, Dict, List, Any
 from sqlalchemy import func
 from backend.security import hash_password, verify_password
-
+from backend.models import AntiCheatLog
 
 # ==============================
 # Local Imports
@@ -229,11 +229,9 @@ def is_answered(a):
 
 
 
-
 # =====================================================
 #
 # =====================================================
-import json
 def parse_json_field(data):
     if not data:
         return []
@@ -824,45 +822,6 @@ def get_student_by_access_code(access_code: str, school_id: int):
 
 
 
-# =====================================================
-#
-# =====================================================
-def update_student_submission_db(access_code, school_id=None):
-    """Mark student as submitted = True for a specific school."""
-    db = get_session()
-    try:
-        code = normalize_code(access_code)
-        query = db.query(Student).filter(Student.access_code == code)
-        if school_id:
-            query = query.filter_by(school_id=school_id)
-        student = query.first()
-        if student:
-            student.submitted = True
-            db.commit()
-    finally:
-        db.close()
-
-
-
-# =====================================================
-#
-# =====================================================
-def reset_student_retake_db(access_code, school_id=None):
-    """Reset student so they can retake (submitted = False) for a specific school."""
-    db = get_session()
-    try:
-        code = normalize_code(access_code)
-        query = db.query(Student).filter(Student.access_code == code)
-        if school_id:
-            query = query.filter_by(school_id=school_id)
-        student = query.first()
-        if student:
-            student.submitted = False
-            db.commit()
-    finally:
-        db.close()
-
-
 
 
 # ==============================
@@ -924,7 +883,7 @@ def add_question_db(
     correct_answer: str,
     school_id: int,
 ):
-    from backend.models import Subject, ObjectiveQuestion
+
 
     if not class_id:
         raise ValueError("class_id is required")
@@ -974,58 +933,6 @@ def add_question_db(
 
 
 
-# =====================================================
-#
-# =====================================================
-def get_objective_questions_db(
-    class_id: int,
-    subject_id: int | None = None,
-    school_id: int | None = None,
-) -> List[Dict[str, Any]]:
-    """Fetch objective questions for a class (optionally filtered by subject and school)."""
-
-    if not class_id:
-        raise ValueError("class_id is required")
-
-    db = get_session()
-    try:
-        query = db.query(ObjectiveQuestion).filter(ObjectiveQuestion.class_id == class_id)
-
-        if subject_id is not None:
-            query = query.filter(ObjectiveQuestion.subject_id == subject_id)
-
-        if school_id is not None:
-            query = query.filter(ObjectiveQuestion.school_id == school_id)
-
-        rows = query.all()
-
-        result = []
-        for q in rows:
-            # options may already be a list depending on DB type
-            if isinstance(q.options, str):
-                try:
-                    opts = json.loads(q.options)
-                except Exception:
-                    opts = []
-            else:
-                opts = q.options or []
-
-            result.append({
-                "id": q.id,
-                "class_id": q.class_id,
-                "subject_id": q.subject_id,
-                "question": q.question_text,
-                "options": opts,
-                "answer": q.answer,
-                "archived": q.archived,
-            })
-
-        return result
-
-    finally:
-        db.close()
-
-
 
 # =====================================================
 #
@@ -1053,7 +960,7 @@ def get_current_school_id() -> int:
 
 
 # =====================================================
-#
+# 📤 HANDLE OBJECTIVE QUESTION UPLOAD
 # =====================================================
 def handle_uploaded_questions(
     class_id: int,
@@ -1061,28 +968,42 @@ def handle_uploaded_questions(
     valid_questions: list,
     school_id: int | None = None,
 ):
-    """Upload and replace objective questions safely with duplicate detection."""
+    """
+    Upload and replace objective questions safely
+    with duplicate detection and optimized inserts.
+    """
+
+    import re
 
     if not class_id or not subject_id:
-        return {"success": False, "error": "class_id and subject_id are required"}
+
+        return {
+            "success": False,
+            "error": "class_id and subject_id are required"
+        }
 
     db = get_session()
 
     try:
-        # -----------------------------
-        # Detect school_id if missing
-        # -----------------------------
+
+        # ------------------------------------------------
+        # 🏫 Detect school_id
+        # ------------------------------------------------
         if school_id is None:
             school_id = get_current_school_id()
 
         if not school_id:
-            return {"success": False, "error": "School ID not found"}
 
-        # -----------------------------
-        # Verify subject belongs to class & school
-        # -----------------------------
-        subject_obj = (
-            db.query(Subject)
+            return {
+                "success": False,
+                "error": "School ID not found"
+            }
+
+        # ------------------------------------------------
+        # ✅ Verify subject ownership
+        # ------------------------------------------------
+        subject_exists = (
+            db.query(Subject.id)
             .filter(
                 Subject.id == subject_id,
                 Subject.class_id == class_id,
@@ -1091,36 +1012,68 @@ def handle_uploaded_questions(
             .first()
         )
 
-        if not subject_obj:
+        if not subject_exists:
+
             return {
                 "success": False,
-                "error": "Subject does not belong to this class or school",
+                "error": (
+                    "Subject does not belong "
+                    "to this class or school"
+                ),
             }
 
-        # -----------------------------
-        # Validate uploaded questions
-        # -----------------------------
+        # ------------------------------------------------
+        # 🧹 CLEAN + DEDUPLICATE
+        # ------------------------------------------------
         cleaned_questions = []
+
         seen_questions = set()
+
         duplicate_count = 0
         skipped_invalid = 0
 
+        # ------------------------------------------------
+        # 🔤 NORMALIZER
+        # ------------------------------------------------
+        def normalize_text(text: str):
+
+            text = text.lower().strip()
+
+            # remove punctuation
+            text = re.sub(r"[^\w\s]", "", text)
+
+            # remove extra spaces
+            text = re.sub(r"\s+", " ", text)
+
+            return text
+
+        # ------------------------------------------------
+        # PROCESS QUESTIONS
+        # ------------------------------------------------
         for q in valid_questions:
 
-            question_text = q.get("question", "").strip()
-            options = q.get("options", [])
-            answer = q.get("answer", "").strip()
+            question_text = str(
+                q.get("question", "")
+            ).strip()
 
+            options = q.get("options", [])
+
+            answer = str(
+                q.get("answer", "")
+            ).strip()
+
+            # ----------------------------
+            # 🚫 Empty question
+            # ----------------------------
             if not question_text:
                 skipped_invalid += 1
                 continue
 
-            # Normalize for duplicate detection
-            normalized = (
-                question_text.lower()
-                .replace("?", "")
-                .replace(".", "")
-                .strip()
+            # ----------------------------
+            # 🔍 Duplicate detection
+            # ----------------------------
+            normalized = normalize_text(
+                question_text
             )
 
             if normalized in seen_questions:
@@ -1129,39 +1082,69 @@ def handle_uploaded_questions(
 
             seen_questions.add(normalized)
 
+            # ----------------------------
+            # 🧹 Clean options
+            # ----------------------------
             clean_options = [
-                opt.strip()
+
+                str(opt).strip()
+
                 for opt in options
-                if isinstance(opt, str) and opt.strip()
+
+                if str(opt).strip()
             ]
 
+            # remove duplicates while preserving order
+            clean_options = list(
+                dict.fromkeys(clean_options)
+            )
+
+            # ----------------------------
+            # 🚫 Need minimum options
+            # ----------------------------
             if len(clean_options) < 2:
                 skipped_invalid += 1
                 continue
 
-            cleaned_questions.append(
-                ObjectiveQuestion(
-                    school_id=school_id,
-                    class_id=class_id,
-                    subject_id=subject_id,
-                    question_text=question_text,
-                    options=clean_options,
-                    correct_answer=answer,
-                )
-            )
+            # ----------------------------
+            # 🚫 Invalid answer
+            # ----------------------------
+            if answer and answer not in clean_options:
 
-        # -----------------------------
-        # Prevent deleting everything
-        # -----------------------------
+                skipped_invalid += 1
+                continue
+
+            # ----------------------------
+            # ✅ Append clean payload
+            # ----------------------------
+            cleaned_questions.append({
+
+                "school_id": school_id,
+
+                "class_id": class_id,
+
+                "subject_id": subject_id,
+
+                "question_text": question_text,
+
+                "options": clean_options,
+
+                "correct_answer": answer,
+            })
+
+        # ------------------------------------------------
+        # 🚫 Prevent wipe
+        # ------------------------------------------------
         if not cleaned_questions:
+
             return {
                 "success": False,
                 "error": "No valid questions found in upload",
             }
 
-        # -----------------------------
-        # Delete existing questions
-        # -----------------------------
+        # ------------------------------------------------
+        # 🗑️ Delete old questions
+        # ------------------------------------------------
         deleted_count = (
             db.query(ObjectiveQuestion)
             .filter(
@@ -1172,27 +1155,53 @@ def handle_uploaded_questions(
             .delete(synchronize_session=False)
         )
 
-        # -----------------------------
-        # Insert new questions
-        # -----------------------------
-        db.add_all(cleaned_questions)
+        # ------------------------------------------------
+        # ⚡ FAST BULK INSERT
+        # ------------------------------------------------
+        db.bulk_insert_mappings(
+            ObjectiveQuestion,
+            cleaned_questions
+        )
+
         db.commit()
 
+        # ------------------------------------------------
+        # 🧠 CLEAR CACHE
+        # ------------------------------------------------
+        for fn in [
+            "load_questions",
+            "load_subjects",
+        ]:
+
+            try:
+                globals()[fn].clear()
+            except Exception:
+                pass
+
         return {
+
             "success": True,
+
             "deleted": deleted_count,
+
             "inserted": len(cleaned_questions),
+
             "duplicates_skipped": duplicate_count,
+
             "invalid_skipped": skipped_invalid,
         }
 
     except Exception as e:
+
         db.rollback()
-        return {"success": False, "error": str(e)}
+
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
     finally:
         db.close()
-
 
 
 # =====================================================
@@ -1352,6 +1361,9 @@ def get_all_submissions_db(school_id=None):
         return []
     finally:
         db.close()
+
+
+
 # -----------------------------
 # Score Calculation
 # -----------------------------
@@ -1398,38 +1410,6 @@ def calculate_score_db(student_name, subject, questions, answers_dict):
         "details": details
     }
 
-# -----------------------------
-# Submission Helpers (Updated for Multi-Tenant)
-# -----------------------------
-def get_submission_db(student_id, subject=None, school_id=None):
-    """
-    Fetch student answers from StudentProgress/StudentAnswer.
-    Arguments:
-        student_id: ID of the student
-        subject: optional Subject name or ID
-        school_id: optional school filter (usually redundant due to TenantMixin)
-    Returns:
-        List of StudentAnswer objects
-    """
-    db = get_session()
-    try:
-        # Join StudentAnswer to StudentProgress for filtering
-        query = db.query(StudentAnswer).join(StudentProgress).filter(
-            StudentProgress.student_id == student_id
-        )
-
-        if subject:
-            # subject can be name or id; adjust filter accordingly
-            query = query.join(Subject).filter(
-                (Subject.id == subject) | (Subject.name == subject)
-            )
-
-        if school_id:
-            query = query.filter(StudentProgress.school_id == school_id)
-
-        return query.all()
-    finally:
-        db.close()
 
 
 
@@ -1587,98 +1567,6 @@ def get_test_duration(class_id: int, subject_id: int, school_id: int):
 
 
 
-# ==============================
-# 📋 Question Helpers
-# ==============================
-def preview_questions_db(
-    class_id: int | None = None,
-    subject_id: int | None = None,
-    school_id: int | None = None,
-    limit: int = 5,
-    db=None
-):
-    """
-    PURE ID-BASED.
-    Preview a limited number of objective questions.
-    """
-    close_db = False
-    if db is None:
-        db = get_session()
-        close_db = True
-
-    try:
-        query = db.query(
-            ObjectiveQuestion.id,
-            ObjectiveQuestion.class_id,
-            ObjectiveQuestion.subject_id,
-            ObjectiveQuestion.question_text,
-        )
-
-        if school_id is not None:
-            query = query.filter(ObjectiveQuestion.school_id == school_id)
-
-        if class_id is not None:
-            query = query.filter(ObjectiveQuestion.class_id == class_id)
-
-        if subject_id is not None:
-            query = query.filter(ObjectiveQuestion.subject_id == subject_id)
-
-        results = query.order_by(ObjectiveQuestion.id.asc()).limit(limit).all()
-
-        return [
-            {
-                "id": q.id,
-                "class_id": q.class_id,
-                "subject_id": q.subject_id,
-                "question": q.question_text,
-            }
-            for q in results
-        ]
-
-    finally:
-        if close_db:
-            db.close()
-
-
-
-# =====================================================
-#
-# =====================================================
-def count_questions_db(
-    class_id: int | None = None,
-    subject_id: int | None = None,
-    school_id: int | None = None,
-    db=None
-):
-    """
-    PURE ID-BASED.
-    Count objective questions using IDs only.
-    """
-    close_db = False
-    if db is None:
-        db = get_session()
-        close_db = True
-
-    try:
-        query = db.query(ObjectiveQuestion)
-
-        if school_id is not None:
-            query = query.filter(ObjectiveQuestion.school_id == school_id)
-
-        if class_id is not None:
-            query = query.filter(ObjectiveQuestion.class_id == class_id)
-
-        if subject_id is not None:
-            query = query.filter(ObjectiveQuestion.subject_id == subject_id)
-
-        return query.count()
-
-    finally:
-        if close_db:
-            db.close()
-
-
-
 
 # =====================================================
 #
@@ -1729,134 +1617,44 @@ def clear_questions_db(school_id: int | None = None):
 # =====================================================
 #
 # =====================================================
+@st.cache_data(ttl=60)
 def load_subjects(
     school_id: int | None = None,
     class_id: int | None = None
 ):
     db = get_session()
+
     try:
+
         query = db.query(Subject)
 
         if school_id is not None:
-            query = query.filter(Subject.school_id == school_id)
+            query = query.filter(
+                Subject.school_id == school_id
+            )
 
         if class_id is not None:
-            query = query.filter(Subject.class_id == class_id)
-
-        return query.order_by(Subject.name).all()
-
-    finally:
-        db.close()
-
-
-# =====================================================
-#
-# =====================================================
-def save_subjects(subjects: list[str], class_id: int) -> bool:
-    db = get_session()
-
-    if not db:
-        st.session_state["subject_msg"] = ("error", "❌ Database session failed.")
-        return False
-
-    try:
-        # -----------------------------------
-        # 1️⃣ Validate context
-        # -----------------------------------
-        school_id = get_current_school_id()
-
-        if not school_id:
-            st.session_state["subject_msg"] = ("error", "❌ No school ID found.")
-            return False
-
-        if not class_id:
-            st.session_state["subject_msg"] = ("error", "⚠️ Please select a class.")
-            return False
-
-        # -----------------------------------
-        # 2️⃣ Clean & normalize input
-        # -----------------------------------
-        clean_subjects = sorted({
-            s.strip()
-            for s in subjects
-            if s and s.strip()
-        })
-
-        if not clean_subjects:
-            st.session_state["subject_msg"] = ("info", "ℹ️ No valid subjects provided.")
-            return True
-
-        # -----------------------------------
-        # 3️⃣ Fetch existing subjects
-        # -----------------------------------
-        existing = {
-            s.name.strip().lower()
-            for s in db.query(Subject)
-            .filter(
-                Subject.school_id == school_id,
+            query = query.filter(
                 Subject.class_id == class_id
             )
+
+        subjects = (
+            query
+            .order_by(Subject.name.asc())
             .all()
-        }
-
-        # -----------------------------------
-        # 4️⃣ Insert new subjects
-        # -----------------------------------
-        added = 0
-
-        for name in clean_subjects:
-            normalized = name.lower()
-
-            if normalized in existing:
-                continue
-
-            new_subject = Subject(
-                name=name,
-                class_id=class_id,
-                school_id=school_id
-            )
-
-            db.add(new_subject)
-            added += 1
-
-        # -----------------------------------
-        # 5️⃣ Commit once
-        # -----------------------------------
-        db.commit()
-
-        # -----------------------------------
-        # 6️⃣ Feedback
-        # -----------------------------------
-        if added:
-            st.session_state["subject_msg"] = (
-                "success",
-                f"✅ {added} new subject(s) added."
-            )
-        else:
-            st.session_state["subject_msg"] = (
-                "info",
-                "ℹ️ No new subjects."
-            )
-
-        return True
-
-    # -----------------------------------
-    # ❌ Error handling
-    # -----------------------------------
-    except Exception as e:
-
-        db.rollback()
-
-        st.session_state["subject_msg"] = (
-            "error",
-            f"❌ Error: {str(e)}"
         )
 
-        return False
+        # ✅ Convert ORM objects to safe serializable data
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "class_id": s.class_id,
+                "school_id": s.school_id,
+            }
+            for s in subjects
+        ]
 
-    # -----------------------------------
-    # 🔒 Always close session
-    # -----------------------------------
     finally:
         db.close()
 
@@ -1905,25 +1703,6 @@ def delete_subject(subject_id: int, class_id: int, school_id: int) -> bool:
         db.close()
 
 
-def save_questions_db(questions):
-    """
-    Save one or multiple Question objects to the database.
-    Returns number of inserted rows.
-    """
-    db = get_session()
-    inserted = 0
-    try:
-        if not questions:
-            return 0
-        if not isinstance(questions, (list, tuple)):
-            questions = [questions]
-        for q in questions:
-            db.add(q)
-            inserted += 1
-        db.commit()
-        return inserted
-    finally:
-        db.close()
 
 
 # ==============================
@@ -1946,6 +1725,11 @@ def clear_students_db(school_id=None):
     finally:
         db.close()
 
+
+
+# ==============================
+# 👨‍🎓
+# ==============================
 def update_student_db(
     student_id: int,
     new_name: str,
@@ -2031,10 +1815,11 @@ def clear_submissions_db(school_id=None):
     finally:
         db.close()
 
+
+
 # ==============================
 # 🔑 Utility
 # ==============================
-
 def normalize_code(code: str) -> str:
     """Normalize access code: remove spaces and uppercase."""
     if not code:
@@ -2228,34 +2013,6 @@ def reset_test(student_id: int):
 
 
 
-# =====================================================
-#
-# =====================================================
-def has_submitted_test(
-    student_id: int,
-    subject_id: int,
-    school_id: int,
-    test_type: str
-) -> bool:
-    db = get_session()
-    try:
-        record = (
-            db.query(StudentProgress)
-            .filter(
-                StudentProgress.student_id == student_id,
-                StudentProgress.subject_id == subject_id,
-                StudentProgress.school_id == school_id,
-                StudentProgress.test_type == test_type
-            )
-            .first()
-        )
-
-        return bool(record and record.submitted)
-
-    finally:
-        db.close()
-
-
 
 # =====================================================
 #
@@ -2272,34 +2029,38 @@ def save_progress(
         school_id,
         test_type,
         student_id=None,
-        submitted=False
+        submitted=False,
+        locked=False      # ← ADD
 ):
 
     db = get_session()
 
     try:
-        # Normalize question IDs
+
         def normalize_question(q):
             if isinstance(q, (int, str)):
                 return q
             return getattr(q, "id", q)
 
-        question_list = [normalize_question(q) for q in questions]
+        question_list = [
+            normalize_question(q)
+            for q in questions
+        ]
 
-        # Safe start_time handling
         if isinstance(start_time, datetime):
             safe_start_time = start_time.timestamp()
+
         elif isinstance(start_time, (int, float)):
             safe_start_time = float(start_time)
+
         else:
             safe_start_time = datetime.now().timestamp()
 
         safe_duration = int(duration) if duration else 0
 
-        # -------------------------------------------------
-        # STRICT IDENTITY (NO access_code here)
-        # -------------------------------------------------
-        existing = db.query(StudentProgress).filter_by(
+        existing = db.query(
+            StudentProgress
+        ).filter_by(
             student_id=student_id,
             subject_id=subject_id,
             class_id=class_id,
@@ -2307,9 +2068,9 @@ def save_progress(
             test_type=test_type
         ).one_or_none()
 
-        # =============================================
+        # =================================
         # UPDATE EXISTING
-        # =============================================
+        # =================================
         if existing:
 
             existing.answers = answers
@@ -2318,21 +2079,27 @@ def save_progress(
             existing.duration = safe_duration
             existing.questions = question_list
 
-            # 🔥 Only upgrade submission, never downgrade
+            # never downgrade
             if submitted:
                 existing.submitted = True
 
-            # Auto-grade objective
+            # NEW
+            if locked:
+                existing.locked = True
+
             if submitted and test_type == "objective":
+
                 existing.review_status = "Auto Graded"
+
                 existing.reviewed_at = datetime.utcnow()
 
-        # =============================================
+        # =================================
         # CREATE NEW
-        # =============================================
+        # =================================
         else:
 
             new_record = StudentProgress(
+
                 access_code=access_code,
                 student_id=student_id,
                 subject_id=subject_id,
@@ -2344,11 +2111,16 @@ def save_progress(
                 start_time=safe_start_time,
                 duration=safe_duration,
                 questions=question_list,
+
                 submitted=bool(submitted),
+
+                locked=bool(locked)   # ← ADD
             )
 
             if submitted and test_type == "objective":
+
                 new_record.review_status = "Auto Graded"
+
                 new_record.reviewed_at = datetime.utcnow()
 
             db.add(new_record)
@@ -2356,64 +2128,108 @@ def save_progress(
         db.commit()
 
     except Exception as e:
+
         db.rollback()
-        print(f"❌ Error saving progress: {e}")
+
+        print(
+            f"❌ Error saving progress: {e}"
+        )
 
     finally:
+
         db.close()
+
 
     # =====================================================
     #
     # =====================================================
+@st.cache_data(ttl=10, show_spinner=False)
 def load_progress(
-        access_code: str,
-        subject_id: int,
-        school_id: int | None,
-        test_type: str,
-        class_id: int | None = None,
-        student_id: int | None = None
+    access_code: str,
+    subject_id: int,
+    school_id: int | None,
+    test_type: str,
+    class_id: int | None = None,
+    student_id: int | None = None
 ):
-
 
     db = get_session()
 
     try:
-        query = db.query(StudentProgress).filter_by(
-            access_code=access_code,
-            subject_id=subject_id,
-            school_id=school_id,
-            test_type=test_type
+
+        # -----------------------------------
+        # ⚡ Select ONLY needed columns
+        # -----------------------------------
+        record = (
+            db.query(
+                StudentProgress.answers,
+                StudentProgress.questions,
+                StudentProgress.current_q,
+                StudentProgress.start_time,
+                StudentProgress.duration,
+                StudentProgress.test_type,
+                StudentProgress.submitted,
+                StudentProgress.student_id,
+            )
+            .filter(
+                StudentProgress.access_code == access_code,
+                StudentProgress.subject_id == subject_id,
+                StudentProgress.school_id == school_id,
+                StudentProgress.test_type == test_type,
+            )
+            .filter(
+                StudentProgress.class_id == class_id
+                if class_id is not None
+                else True
+            )
+            .first()
         )
-
-        if class_id is not None:
-            query = query.filter_by(class_id=class_id)
-
-        record = query.first()
 
         if not record:
             return None
 
-        # -------------------------
+        # -----------------------------------
         # ✅ SAFE JSON PARSING
-        # -------------------------
+        # -----------------------------------
         try:
-            answers = json.loads(record.answers) if record.answers else []
-        except:
+            answers = (
+                json.loads(record.answers)
+                if record.answers
+                else []
+            )
+
+        except Exception:
             answers = []
 
         try:
-            questions = json.loads(record.questions) if record.questions else []
-        except:
+            questions = (
+                json.loads(record.questions)
+                if record.questions
+                else []
+            )
+
+        except Exception:
             questions = []
 
+        # -----------------------------------
+        # ✅ RETURN CLEAN SERIALIZABLE DATA
+        # -----------------------------------
         return {
+
             "answers": answers,
+
             "questions": questions,
+
             "current_q": record.current_q or 0,
-            "start_time": record.start_time,  # ✅ NO DEFAULT
-            "duration": record.duration,  # ✅ NO DEFAULT
+
+            "start_time": record.start_time,
+
+            "duration": record.duration,
+
             "test_type": record.test_type,
-            "submitted": record.submitted,
+
+            "submitted": bool(record.submitted),
+
             "student_id": record.student_id,
         }
 
@@ -2812,83 +2628,6 @@ def delete_school(school_id, db=None):
 
 
 
-# =====================================================
-# load_student_results
-# =====================================================
-def load_student_results(
-    access_code: str,
-    school_id: int | None = None,
-    db=None
-):
-    """
-    PURE ID-BASED.
-    Fetch test results using access_code → student_id.
-    Returns dicts (safe for UI).
-    """
-    if not access_code:
-        raise ValueError("access_code is required")
-
-    close_db = False
-    if db is None:
-        db = get_session()
-        close_db = True
-
-    try:
-        # 1️⃣ Resolve student ID (case-insensitive)
-        student = (
-            db.query(
-                Student.id,
-                Student.class_id,
-                Student.school_id
-            )
-            .filter(func.upper(Student.access_code) == access_code.strip().upper())
-            .first()
-        )
-
-        if not student:
-            print(f"⚠️ No student found for access code {access_code}")
-            return []
-
-        # 2️⃣ Fetch results using IDs only
-        query = db.query(
-            TestResult.id,
-            TestResult.subject_id,
-            TestResult.score,
-            TestResult.total,
-            TestResult.taken_at,
-            TestResult.school_id,
-        ).filter(TestResult.student_id == student.id)
-
-        if school_id is not None:
-            query = query.filter(TestResult.school_id == school_id)
-
-        results = query.order_by(TestResult.taken_at.desc()).all()
-
-        # 3️⃣ Return UI-safe dicts (NO STRINGS)
-        return [
-            {
-                "result_id": r.id,
-                "student_id": student.id,
-                "class_id": student.class_id,
-                "subject_id": r.subject_id,
-                "score": r.score,
-                "total": r.total,
-                "taken_at": r.taken_at,
-                "school_id": r.school_id,
-            }
-            for r in results
-        ]
-
-    except Exception as e:
-        print(f"❌ Error loading results for {access_code}: {e}")
-        return []
-
-    finally:
-        if close_db:
-            db.close()
-
-
-
 
 # =====================================================
 # set retake
@@ -2917,43 +2656,6 @@ def can_take_test(student_id, subject_id, school_id, test_type):
     finally:
         db.close()
 
-
-
-
-# =====================================================
-# set retake
-# =====================================================
-def get_retake_db(access_code: str, subject_id: int, school_id: int = None) -> bool:
-    """
-    Check if a student has retake permission for a subject (multi-tenant aware).
-    Uses subject_id instead of subject text.
-    """
-    db = get_session()
-    try:
-        student = db.query(Student).filter_by(access_code=access_code).first()
-        if not student:
-            return False
-
-        # Ensure subject_id is always int (avoids dict or string errors)
-        try:
-            subject_id = int(subject_id)
-        except:
-            return False
-
-        query = db.query(Retake).filter_by(
-            student_id=student.id,
-            subject_id=subject_id
-        )
-
-        # Only filter on school_id if provided
-        if school_id is not None:
-            query = query.filter(Retake.school_id == school_id)
-
-        retake = query.first()
-        return bool(retake and retake.can_retake)
-
-    finally:
-        db.close()
 
 
 
@@ -3000,238 +2702,11 @@ def decrement_retake(
         db.close()
 
 
-# =====================================================
-# set retake
-# =====================================================
-def set_retake_db(
-    access_code: str,
-    subject_id: int,
-    can_retake: bool = True,
-    school_id: int | None = None,
-    db=None
-):
-
-    if not access_code:
-        raise ValueError("access_code is required")
-
-    subject_id = int(subject_id)
-
-    close_db = False
-    if db is None:
-        db = get_session()
-        close_db = True
-
-    try:
-        access_code = access_code.strip().upper()
-
-        # ✅ Robust student lookup
-        query = db.query(Student).filter(
-            func.upper(func.trim(Student.access_code)) == access_code
-        )
-
-        if school_id is not None:
-            query = query.filter(Student.school_id == school_id)
-
-        student = query.first()
-
-        if not student:
-            raise ValueError(
-                f"Student with access_code '{access_code}' not found"
-            )
-
-        # ✅ Safe retake lookup
-        retake_query = db.query(Retake).filter(
-            Retake.student_id == student.id,
-            Retake.subject_id == subject_id,
-        )
-
-        if school_id is not None:
-            retake_query = retake_query.filter(
-                Retake.school_id == school_id
-            )
-
-        retake = retake_query.one_or_none()
-
-        # ✅ Update / Insert
-        if retake:
-            retake.can_retake = can_retake
-        else:
-            db.add(
-                Retake(
-                    student_id=student.id,
-                    subject_id=subject_id,
-                    can_retake=can_retake,
-                    school_id=school_id,
-                )
-            )
-
-        db.commit()
-
-        print(
-            f"🟢 Retake {'ENABLED' if can_retake else 'DISABLED'} "
-            f"| access_code={access_code} | subject_id={subject_id}"
-        )
-
-    except Exception as e:
-        db.rollback()
-        print(f"❌ Error in set_retake_db: {e}")
-        raise
-
-    finally:
-        if close_db:
-            db.close()
-
-
-
-# =====================================================
-# get_classes_by_school
-# =====================================================
-def get_classes_by_school(school_id: int, db=None):
-    if not school_id:
-        return []
-
-    close_db = False
-    if db is None:
-        db = get_session()
-        close_db = True
-
-    try:
-        return (
-            db.query(Class)
-            .filter(Class.school_id == school_id)
-            .order_by(Class.name.asc())
-            .all()
-        )
-    finally:
-        if close_db:
-            db.close()
-
-
-# =====================================================
-# load_classes_for_school
-# =====================================================
-def load_classes_for_school(school_id: int):
-    """
-    Return a list of Class ORM objects for a given school_id.
-    """
-    db = get_session()
-    try:
-        return (
-            db.query(Class)
-            .filter(Class.school_id == school_id)
-            .order_by(Class.name.asc())
-            .all()
-        )
-    finally:
-        db.close()
-
-from sqlalchemy import or_
 
 
 # =====================================================
 #
 # =====================================================
-def is_question_in_active_use(
-    session: Session,
-    question_id: int,
-    school_id: int,
-) -> bool:
-    """
-    Returns True if the question is referenced by any
-    unfinished student attempt.
-    """
-
-    from sqlalchemy import cast, JSON, and_
-
-    in_progress = (
-        session.query(StudentProgress.id)
-        .filter(
-            and_(
-                StudentProgress.school_id == school_id,
-                StudentProgress.submitted.is_(False),
-                cast(
-                    StudentProgress.questions,
-                    JSON
-                ).contains([question_id])
-            )
-        )
-        .first()
-    )
-
-    return in_progress is not None
-
-
-
-# =====================================================
-#
-# =====================================================
-def admin_review_panel():
-
-    st.title("📝 Subjective Test Review Panel")
-
-    db = get_session()
-
-    try:
-
-        # ----------------------------------------
-        # Load ONLY pending subjective submissions
-        # ----------------------------------------
-        pending = db.query(StudentProgress).filter(
-            StudentProgress.test_type == "subjective",
-            StudentProgress.submitted == True,
-            StudentProgress.is_reviewed == False
-        ).order_by(StudentProgress.id.desc()).all()
-
-        if not pending:
-            st.success("✅ No pending subjective submissions.")
-            return
-
-        for progress in pending:
-
-            with st.expander(f"📄 Access Code: {progress.access_code} | Subject ID: {progress.subject_id}"):
-
-                st.write("### Student Answers")
-
-                answers = progress.answers or {}
-
-                for q_idx, answer in answers.items():
-
-                    st.markdown(f"**Question {q_idx+1}:**")
-                    st.write(answer if answer else "No answer")
-
-                # ----------------------------------------
-                # Teacher grading inputs
-                # ----------------------------------------
-
-                score = st.number_input(
-                    "Score",
-                    min_value=0,
-                    max_value=100,
-                    key=f"score_{progress.id}"
-                )
-
-                comment = st.text_area(
-                    "Teacher Comment",
-                    key=f"comment_{progress.id}"
-                )
-
-                if st.button("✅ Submit Review", key=f"review_{progress.id}"):
-
-                    progress.score = score
-                    progress.teacher_comment = comment
-                    progress.review_status = "reviewed"
-                    progress.is_reviewed = True
-                    progress.reviewed_by = "Admin"
-                    progress.reviewed_at = datetime.utcnow()
-
-                    db.commit()
-
-                    st.success("✅ Review saved successfully")
-                    st.rerun()
-
-    finally:
-        db.close()
-
 ROLE_PERMISSIONS = {
 
     "super_admin": [
@@ -3291,25 +2766,11 @@ def require_permission(action):
         st.stop()
 
 
-# =====================================================
-#
-# =====================================================
-def require_school_scope(query, school_id, role):
-    """
-    Ensures non-super-admin users cannot access other schools' data.
-    """
-    if role == "super_admin":
-        return query
-
-    return query.filter_by(school_id=school_id)
-
 
 
 # =====================================================
 #
 # =====================================================
-from backend.database import get_session
-from backend.models import AntiCheatLog
 def log_violation(
     progress_id,
     student_id,
@@ -3347,26 +2808,6 @@ def log_violation(
 
         db.close()
 
-
-
-
-# =====================================================
-#
-# =====================================================
-def parse_json_field(data):
-    if not data:
-        return []
-
-    if isinstance(data, list):
-        return data
-
-    if isinstance(data, str):
-        try:
-            return json.loads(data)
-        except:
-            return []
-
-    return []
 
 
 
@@ -3464,50 +2905,5 @@ def normalize_subjective(raw):
             })
 
     return details
-
-
-# =====================================================
-#
-# =====================================================
-@st.cache_data(ttl=60)
-def load_student_records(student_id, school_id):
-
-    session = get_session()
-
-    try:
-        stud = (
-            session.query(Student)
-            .filter(
-                Student.id == student_id,
-                Student.school_id == school_id
-            )
-            .first()
-        )
-
-        if stud is None:
-            return []
-
-        records = (
-            session.query(StudentProgress)
-            .options(
-                joinedload(StudentProgress.subject)
-            )
-            .filter(
-                StudentProgress.student_id == student_id,
-                StudentProgress.school_id == school_id,
-                StudentProgress.submitted.is_(True)
-            )
-            .order_by(
-                StudentProgress.created_at.desc()
-            )
-            .all()
-        )
-
-        return records
-
-    finally:
-        session.close()
-
-
 
 
