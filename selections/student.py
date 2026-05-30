@@ -853,6 +853,7 @@ def run_student_mode():
     if not subjects:
         st.info("🚫 No subjects available for your class. Contact admin.")
         st.stop()
+
     # -------------------------
     # 📘 SUBJECT SELECTION
     # -------------------------
@@ -861,13 +862,12 @@ def run_student_mode():
     selected_subject = st.selectbox(
         "Subject",
         subjects,
-        format_func=lambda s: s.name,
+        format_func=lambda s: s["name"],
         key="subject_select_box"
     )
 
-    selected_subject_id = selected_subject.id
-    selected_subject_name = selected_subject.name
-
+    selected_subject_id = selected_subject.get("id")
+    selected_subject_name = selected_subject.get("name")
     # -------------------------
     # 🔄 SUBJECT CHANGE RESET
     # -------------------------
