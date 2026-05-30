@@ -2860,8 +2860,48 @@ def normalize_objective(raw):
 
     return details
 
+    # -------------------------
+    # Safe options parser + cleaner
+    # -------------------------
 
 
+def parse_options(raw_options):
+    if isinstance(raw_options, list):
+        opts = raw_options
+    elif isinstance(raw_options, str):
+        cleaned = raw_options.strip()
+        try:
+            parsed = json.loads(cleaned)
+            opts = parsed if isinstance(parsed, list) else [str(parsed)]
+        except Exception:
+            opts = [o.strip() for o in cleaned.replace(";", ",").split(",") if o.strip()]
+    else:
+        opts = []
+
+
+
+
+
+    def clean_option(opt):
+        text = str(opt).strip()
+        text = text.strip('"').strip("'")
+        for bad in ["(", ")", "[", "]", "{", "}"]:
+            text = text.replace(bad, "")
+        text = text.replace("\n", " ").strip()
+        text = " ".join(text.split())
+        return text
+
+    return [clean_option(o) for o in opts]
+
+    # -------------------------
+    # Safe field getter
+    # -------------------------
+
+
+def field(obj, name, default=None):
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
 
 # =====================================================
 #

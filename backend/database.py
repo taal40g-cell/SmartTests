@@ -77,9 +77,13 @@ def get_engine():
     if url.startswith("sqlite"):
         _engine = create_engine(
             url,
-            connect_args={"check_same_thread": False},
+            connect_args={
+                "check_same_thread": False,
+                "timeout": 30   # ✅ ADD THIS
+            },
             future=True,
         )
+
     else:
         _engine = create_engine(
             url,

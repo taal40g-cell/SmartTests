@@ -21,7 +21,7 @@ from backend.db_helpers import (
     get_test_duration,
     get_student_by_access_code,
     load_progress,
-    save_progress,
+    save_progress,parse_options,field,
     decrement_retake,normalize_subjective,normalize_objective,
     log_violation,is_answered
 )
@@ -546,7 +546,10 @@ def run_student_mode():
 
                         name=stud.name,
 
-                        class_name="",
+                        class_name=st.session_state.get(
+                            "class_name",
+                            "Unknown Class"
+                        ),
 
                         subject=subject_name,
 
@@ -1167,15 +1170,14 @@ def run_student_mode():
             for q in question_bank:
 
                 question_dict = {
-                    "id": q.get("id"),
+                    "id": q.id,
                     "text": (
-                            q.get("question")
-                            or q.get("question_text")
-                            or q.get("text")
+                            getattr(q, "question_text", None)
+                            or getattr(q, "question", None)
+                            or getattr(q, "text", None)
                             or "No Question"
                     ),
                 }
-
                 if st.session_state.test_type == "objective":
 
                     question_dict["options"] = getattr(q, "options", [])
@@ -1396,7 +1398,7 @@ def run_student_mode():
         mins = int(remaining // 60)
         secs = int(remaining % 60)
 
-        st.info(f"⏱️ Time Left: {mins:02d}:{secs:02d}")
+
 
         # -------------------------
         # 🔴 AUTO SUBMIT (RUN FIRST)
@@ -1491,40 +1493,7 @@ def run_student_mode():
                 submitted=False
             )
 
-        # -------------------------
-        # Safe options parser + cleaner
-        # -------------------------
-        def parse_options(raw_options):
-            if isinstance(raw_options, list):
-                opts = raw_options
-            elif isinstance(raw_options, str):
-                cleaned = raw_options.strip()
-                try:
-                    parsed = json.loads(cleaned)
-                    opts = parsed if isinstance(parsed, list) else [str(parsed)]
-                except Exception:
-                    opts = [o.strip() for o in cleaned.replace(";", ",").split(",") if o.strip()]
-            else:
-                opts = []
 
-            def clean_option(opt):
-                text = str(opt).strip()
-                text = text.strip('"').strip("'")
-                for bad in ["(", ")", "[", "]", "{", "}"]:
-                    text = text.replace(bad, "")
-                text = text.replace("\n", " ").strip()
-                text = " ".join(text.split())
-                return text
-
-            return [clean_option(o) for o in opts]
-
-        # -------------------------
-        # Safe field getter
-        # -------------------------
-        def field(obj, name, default=None):
-            if isinstance(obj, dict):
-                return obj.get(name, default)
-            return getattr(obj, name, default)
 
 
         # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
@@ -1590,9 +1559,11 @@ def run_student_mode():
         st.markdown(
             f"""
             <div style="
-                 padding: 6px 8px;
+                padding: 6px 8px;
                 border-radius: 8px;
-                background-color:#cbd5c0;
+                background-image: url('YOUR_IMAGE_URL_HERE');
+                background-size: cover;
+                background-position: center;
                 border: 2px solid {timer_border_color};
                 color: #111827;
                 text-align: center;
@@ -1620,13 +1591,12 @@ def run_student_mode():
 
         percent = int((answered / total_questions) * 100) if total_questions else 0
 
-
         st.markdown(
             f"""
             <div style="
                 padding: 6px 10px;
                 border-radius: 8px;
-                background-color:#cbd5c0;
+                background-color: #7abaa1;
                 border: 2px solid {timer_border_color};
                 color: #111827;
                 text-align: center;
@@ -1641,7 +1611,6 @@ def run_student_mode():
             unsafe_allow_html=True
         )
 
-
         # -------------------------
         # ⛔ Auto-submit when time is up
         # -------------------------
@@ -1655,7 +1624,7 @@ def run_student_mode():
                 else st.session_state.start_time
             )
 
-            subject_id = selected_subject.id
+            subject_id = selected_subject["id"]
 
             # 1️⃣ Save final progress (submitted=True)
             save_progress(
@@ -2015,19 +1984,18 @@ def run_student_mode():
             st.markdown(
                 """
                 <div style="
-                    position:sticky;
-                    top:0;
-                    background:#cbd5c0;
-                    color:#000000;
-                    padding:12px;
-                    text-align:center;
-                    border-radius:10px;
-                    border:1px solid #ffd54f;
-                    margin-bottom:10px;
-                    font-weight:bold;
+                    padding: 6px 8px;
+                    border-radius: 8px;
+                    background-color:#cbd5c0;
+                    border: 2px solid #f59e0b;
+                    color: #111827;
+                    text-align: center;
+                    font-size: 16px;
+                    font-weight: 600;
+                    margin-bottom: 8px;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
                 ">
-                ⚠️ Copy/Paste activity is monitored.
-                Multiple violations may auto-submit the test.
+                    ⚠️ Copying and Pasting is prohibited during this test. Violations may be recorded automatically.
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -2182,7 +2150,7 @@ def run_student_mode():
                     else st.session_state.start_time
                 )
 
-                subject_id = selected_subject.id
+                subject_id = selected_subject["id"]
                 test_type = st.session_state.test_type
 
 
@@ -2652,7 +2620,7 @@ def run_student_mode():
                             "Unknown Class"
                         ),
 
-                        subject=selected_subject.name,
+                        subject=selected_subject["name"],
 
                         correct=pdf_correct,
 
@@ -2683,7 +2651,7 @@ def run_student_mode():
 
                         file_name=(
                             f"{student.get('name', 'student')}_"
-                            f"{selected_subject.name}_"
+                            f"{selected_subject['name']}_"
                             f"{pdf_test_type}_result.pdf"
                         ),
 
