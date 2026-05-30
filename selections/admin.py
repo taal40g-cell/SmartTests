@@ -182,26 +182,11 @@ ROLE_TABS = {
 # Admin UI (CLEAN + STRICT)
 # ==============================
 def run_admin_mode():
-
     if not require_admin_login():
         return
 
-    st.sidebar.write("DEBUG")
-    st.sidebar.write(
-        {
-            "admin_logged_in": st.session_state.get("admin_logged_in"),
-            "admin_username": st.session_state.get("admin_username"),
-            "admin_role": st.session_state.get("admin_role"),
-            "selected_tab": st.session_state.get("selected_tab"),
-            "school_id": st.session_state.get("school_id"),
-        }
-    )
-
     db = get_session()
 
-    ...
-
-    db = get_session()
 
     # ✅ PRE-DECLARE VARIABLES (fix warning)
     admin_role = None
