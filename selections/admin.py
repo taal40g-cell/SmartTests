@@ -178,13 +178,28 @@ ROLE_TABS = {
     ]
 }
 
-
 # ==============================
 # Admin UI (CLEAN + STRICT)
 # ==============================
 def run_admin_mode():
+
     if not require_admin_login():
         return
+
+    st.sidebar.write("DEBUG")
+    st.sidebar.write(
+        {
+            "admin_logged_in": st.session_state.get("admin_logged_in"),
+            "admin_username": st.session_state.get("admin_username"),
+            "admin_role": st.session_state.get("admin_role"),
+            "selected_tab": st.session_state.get("selected_tab"),
+            "school_id": st.session_state.get("school_id"),
+        }
+    )
+
+    db = get_session()
+
+    ...
 
     db = get_session()
 
@@ -4376,14 +4391,16 @@ def run_admin_mode():
                         try:
                             add_submission_db(
                                 student_id=s["student_id"],
-                                class_id=s["class_id"],
                                 subject_id=s["subject_id"],
-                                test_type=s.get("test_type", "objective"),
+                                submissions=s.get("submissions", []),
                                 score=s.get("score", 0),
-                                answers=s.get("answers", ""),
-                                review_status=s.get("review_status", "pending"),
+                                total=s.get("total", 0),
+                                percentage=s.get("percentage", 0),
                                 school_id=school_id,
+                                class_id=s.get("class_id"),
+                                test_type=s.get("test_type", "objective")
                             )
+
                         except Exception:
                             continue
 
