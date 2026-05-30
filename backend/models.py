@@ -424,7 +424,8 @@ class StudentProgress(Base):
     test_type = Column(String(20), nullable=False, default="objective")
 
     answers = Column(JSON, nullable=False, default=lambda: [])
-    
+    questions = Column(JSON, nullable=True)
+
     attachments = Column(JSON, nullable=True)
 
     current_q = Column(Integer, default=0)
