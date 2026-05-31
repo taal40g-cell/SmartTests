@@ -764,7 +764,10 @@ def run_student_mode():
 
                         name=stud.name,
 
-                        class_name="",
+                        class_name=st.session_state.get(
+                            "class_name",
+                            "Unknown Class"
+                        ),
 
                         subject=subject_name,
 
@@ -1107,12 +1110,12 @@ def run_student_mode():
             # Otherwise allow fresh start
             st.session_state.test_action = "start"
             st.session_state.test_started = True
-            st.rerun()
+
 
         if resume_clicked:
             st.session_state.test_action = "resume"
             st.session_state.test_started = True
-            st.rerun()
+
 
     # -------------------------
     # 🧠 UX LABELS

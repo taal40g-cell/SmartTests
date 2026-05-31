@@ -1,12 +1,14 @@
-# ============================================
 # admin.py — SmartTest Admin (Full Clean Rewrite)
 # ============================================
 import time
-from sqlalchemy import text
+import json
 import pandas as pd
 import streamlit as st
 from sqlalchemy.exc import IntegrityError
 from backend.security import hash_password, verify_password
+from datetime import datetime
+from sqlalchemy import or_
+from sqlalchemy import text
 from backend.ui import (
 
 
@@ -21,7 +23,6 @@ from backend.helpers import get_objective_questions, get_subjective_questions
 from backend.db_helpers import (
     get_all_admins,
     set_admin,
-    delete_admin,
     verify_admin,
     add_student_db,
     get_student_by_access_code,
@@ -35,7 +36,7 @@ from backend.db_helpers import (
     clear_questions_db,
     clear_submissions_db,
     update_admin_password,
-    bulk_add_students_db,
+    bulk_add_students_db,parse_json_field,
     delete_subject,require_permission,
     handle_uploaded_questions,restore_question,
     archive_question,get_all_schools,
@@ -1713,7 +1714,6 @@ def run_admin_mode():
 
             try:
 
-                import json
 
                 data = json.load(uploaded_file)
 
@@ -2249,10 +2249,6 @@ def run_admin_mode():
     # =====================================================
     elif selected_tab == "✍️ Review Subj Questions":
 
-        import json
-        from datetime import datetime
-        from sqlalchemy import or_, text
-
         st.subheader("📋 Subjective Grading Dashboard")
 
         school_id = st.session_state.get("school_id")
@@ -2270,21 +2266,6 @@ def run_admin_mode():
             ]
         )
 
-        def parse_json_field(data):
-
-            if not data:
-                return []
-
-            if isinstance(data, list):
-                return data
-
-            if isinstance(data, str):
-                try:
-                    return json.loads(data)
-                except:
-                    return []
-
-            return []
 
         db = get_session()
 
@@ -2324,6 +2305,7 @@ def run_admin_mode():
                         StudentProgress.review_status == "pending"
                     )
                 )
+
 
             elif status_filter == "Reviewed":
 
@@ -2562,10 +2544,7 @@ def run_admin_mode():
                         # ---------------------------------
                         # UI
                         # ---------------------------------
-
-                        st.markdown(
-                            "### 📄 Student Answers"
-                        )
+                        st.markdown("### 📄 Student Answers")
 
                         scores = {}
 
@@ -2579,6 +2558,7 @@ def run_admin_mode():
                                     answers,
                                     start=1
                             ):
+
                                 question = item.get(
                                     "question",
                                     f"Question {idx}"
@@ -2589,97 +2569,64 @@ def run_admin_mode():
                                     "No answer"
                                 )
 
-                                st.markdown(
-                                    f"""
-                                    <div style="
-                                        padding:10px;
-                                        border-radius:10px;
-                                        border:1px solid #d1d5db;
-                                        margin-bottom:10px;
-                                        background:#f9fafb;
-                                    ">
-                                        <b>Q{idx}:</b> {question}
-                                        <hr>
-                                        <b>Answer:</b><br>
-                                        {answer}
-                                    </div>
-                                    """,
-                                    unsafe_allow_html=True
+                                # ---------------------------------
+                                # QUESTION + SCORE SIDE BY SIDE
+                                # ---------------------------------
+                                col_question, col_score = st.columns(
+                                    [9, 2],
+                                    vertical_alignment="top"
                                 )
 
-                    scores = {}
+                                with col_question:
 
-                    if not answers:
-                        st.info("No answers submitted.")
-
-                    else:
-
-                        for idx, item in enumerate(
-                                answers,
-                                start=1
-                        ):
-
-                            question = item.get(
-                                "question",
-                                f"Question {idx}"
-                            )
-
-                            answer = item.get(
-                                "answer",
-                                ""
-                            )
-
-                            col1, col2, col3 = st.columns(
-                                [3, 5, 2]
-                            )
-
-                            with col1:
-
-                                st.markdown(
-                                    f"**Q{idx}:** {question}"
-                                )
-
-                            with col2:
-
-                                st.markdown(
-                                    answer
-                                    or "_No answer_"
-                                )
-
-                            with col3:
-
-                                slider_key = (
-                                    f"score_{sub.id}_{idx}"
-                                )
-
-                                existing_score = 0
-
-                                if (
-                                        is_reviewed
-                                        and sub.score
-                                ):
-                                    total_q = len(
-                                        answers
+                                    st.markdown(
+                                        f"""
+                                        <div style="
+                                            padding:15px;
+                                            border-radius:10px;
+                                            border:1px solid #d1d5db;
+                                            background:white;
+                                            box-shadow:0 1px 3px rgba(0,0,0,0.08);
+                                            margin-bottom:10px;
+                                        ">
+                                            <b>Q{idx}:</b> {question}
+                                            <hr>
+                                            <b>Answer:</b><br>
+                                            {answer}
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True
                                     )
 
-                                    existing_score = int(
-                                        sub.score /
-                                        total_q
+                                with col_score:
+
+                                    existing_score = 0
+
+                                    if (
+                                            is_reviewed
+                                            and sub.score
+                                    ):
+                                        total_q = len(answers)
+
+                                        existing_score = int(
+                                            sub.score / total_q
+                                        )
+
+                                    st.markdown(
+                                        f"**Q{idx} Score**"
                                     )
 
-                                score = st.slider(
-                                    f"Score Q{idx}",
-                                    0,
-                                    100,
-                                    value=existing_score,
-                                    key=slider_key,
-                                    disabled=is_reviewed
-                                )
+                                    scores[idx] = st.slider(
+                                        label=f"Q{idx}",
+                                        min_value=0,
+                                        max_value=100,
+                                        value=existing_score,
+                                        key=f"score_{sub.id}_{idx}",
+                                        disabled=is_reviewed,
+                                        label_visibility="collapsed"
+                                    )
 
-                                scores[idx] = score
-
-                            st.markdown("---")
-
+                                st.divider()
 
                     # -------------------------
                     # ATTACHMENTS
@@ -2848,8 +2795,6 @@ def run_admin_mode():
     elif selected_tab == "🗑️ Delete Questions":
 
         require_permission("delete_questions")  # 🔐 ADD THIS
-
-        import json
 
         st.subheader("🗑️ Question Deletion Dashboard")
 
@@ -4282,7 +4227,7 @@ def run_admin_mode():
             "submissions": submissions_df.to_dict(orient="records") if not submissions_df.empty else [],
         }
 
-        import json
+
 
         json_bytes = json.dumps(full_backup, indent=2, default=str).encode("utf-8")
 
@@ -4312,9 +4257,6 @@ def run_admin_mode():
         )
 
         if uploaded_backup:
-
-            import json
-
             try:
                 backup_data = json.load(uploaded_backup)
 
@@ -4405,7 +4347,7 @@ def run_admin_mode():
 
         st.subheader("🚨 Anti-Cheat Violation Logs")
 
-        from sqlalchemy import text
+
 
 
         db = get_session()
