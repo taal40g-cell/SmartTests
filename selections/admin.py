@@ -1826,6 +1826,9 @@ def run_admin_mode():
                 st.error(f"🚫 Upload error: {e}")
 
 
+
+
+
     # =========================================================
     # ✍️ SUBJECTIVE QUESTIONS (SYNCED + SAFE)
     # =========================================================
@@ -2471,18 +2474,32 @@ def run_admin_mode():
 
                                 })
 
+
                             # -------------------------
                             # Dict answer
                             # -------------------------
 
                             elif isinstance(item, dict):
 
-                                question = (
+                                import re
+
+                                raw_question = (
                                         item.get("question")
                                         or item.get("question_text")
                                         or f"Question {idx + 1}"
                                 )
 
+                                # STEP 1: normalize spacing issues
+                                q = str(raw_question).strip()
+
+                                # STEP 2: fix broken numbering formats
+                                q = re.sub(r"^\s*\d+\s*[\.\)]\s*", "", q)  # 1. or 1)
+                                q = re.sub(r"^\s*\d+(?=\w)", "", q)  # 11What -> What (rare edge case)
+
+                                # STEP 3: fix double spacing / line breaks
+                                q = " ".join(q.split())
+
+                                question = q
                                 answer = ""
 
                                 # old structure
@@ -2558,6 +2575,7 @@ def run_admin_mode():
                                     answers,
                                     start=1
                             ):
+
 
                                 question = item.get(
                                     "question",
