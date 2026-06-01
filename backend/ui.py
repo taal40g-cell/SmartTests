@@ -14,7 +14,9 @@ from reportlab.platypus import Table, TableStyle
 from datetime import datetime
 from backend.models import Subject
 from backend.database import get_session
-
+from backend.database import get_session
+from backend.models import StudentProgress
+from sqlalchemy.orm import Session
 
 # -----------------------------
 # Cached function to read & encode image
@@ -212,8 +214,6 @@ def generate_pdf(
     test_type="objective"
 ):
 
-
-
     # =====================================================
     #
     # =====================================================
@@ -226,6 +226,7 @@ def generate_pdf(
     from reportlab.lib.styles import (
         getSampleStyleSheet
     )
+
 
     buffer = BytesIO()
 
@@ -354,8 +355,9 @@ def generate_pdf(
     else:
 
         info.append(
-            f"Status: Awaiting teacher review"
+            f"Status: Reviewed ✓"
         )
+
 
     c.setFont(
         "Helvetica",
@@ -632,15 +634,20 @@ def generate_pdf(
 
     )
 
-    table_width,table_height=table.wrap(
-        width-100,
+    table_width, table_height = table.wrap(
+        width - 100,
         height
     )
+
+    if y - table_height < 50:
+        c.showPage()
+
+        y = height - 80
 
     table.drawOn(
         c,
         50,
-        y-table_height
+        y - table_height
     )
 
     # =========================================
@@ -665,6 +672,9 @@ def generate_pdf(
     buffer.seek(0)
 
     return buffer.getvalue()
+
+
+
 
 
 
@@ -758,34 +768,7 @@ def style_admin_headers():
 
 
 
-def get_test_type(subject_name: str):
-    """
-    Determines if a subject should be Objective or Subjective.
-    You can later move this logic to the DB or admin panel for flexibility.
-    """
-    subject_name = subject_name.strip().lower()
 
-    # Example logic — you can customize
-    OBJECTIVE_SUBJECTS = [
-        "mathematics", "science", "ict", "rme", "social studies", "english"
-    ]
-    SUBJECTIVE_SUBJECTS = [
-        "essay writing", "composition", "literature", "dictation"
-    ]
-
-    if subject_name in OBJECTIVE_SUBJECTS:
-        return "objective"
-    elif subject_name in SUBJECTIVE_SUBJECTS:
-        return "subjective"
-    else:
-        # Default to objective if not categorized yet
-        return "objective"
-
-
-
-from backend.database import get_session
-from backend.models import StudentProgress
-from sqlalchemy.orm import Session
 
 def get_saved_progress(access_code: str, subject: str, school_id: int, test_type: str = "objective") -> dict:
     """
@@ -819,15 +802,6 @@ def get_saved_progress(access_code: str, subject: str, school_id: int, test_type
 
 
 
-def get_subject_id_by_name(subject_name: str) -> int | None:
-    """
-    Convert a subject name (string) to its subject_id (int) using cached subjects.
-    Returns None if not found.
-    """
-    return next(
-        (s["id"] for s in st.session_state.get("subjects", []) if s["name"] == subject_name),
-        None
-    )
 
 
 def parse_json_field(data):

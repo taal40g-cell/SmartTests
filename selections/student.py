@@ -898,7 +898,7 @@ def run_student_mode():
             )
 
         st.session_state.subject = selected_subject_name
-        st.rerun()
+
 
     if selected_subject_id is None:
         st.info(f"🚫 Subject ID not found for '{selected_subject}'")

@@ -4135,7 +4135,6 @@ def run_admin_mode():
             # 📊 RESULT TABLE (SAFE)
             # ====================================================
             results_csv = None
-
             if subs:
 
                 rows = []
