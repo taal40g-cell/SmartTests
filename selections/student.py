@@ -1088,34 +1088,42 @@ def run_student_mode():
         # -------------------------
         # ACTION HANDLING
         # -------------------------
+        # -------------------------
+        # ACTION HANDLING
+        # -------------------------
         if start_clicked:
 
             # Check if there is an ACTIVE unfinished attempt
             if saved_progress and not saved_progress.get("submitted", False):
 
-                # Optional: also check if time has not expired
                 saved_start_time = saved_progress.get("start_time")
                 saved_duration = saved_progress.get("duration")
 
                 if saved_start_time and saved_duration:
+
                     saved_end_time = (
-                            datetime.fromtimestamp(saved_start_time) +
-                            timedelta(seconds=saved_duration)
+                            datetime.fromtimestamp(saved_start_time)
+                            + timedelta(seconds=saved_duration)
                     )
 
                     if datetime.now() < saved_end_time:
-                        st.warning("⚠️ You have an unfinished test. Please resume instead.")
+                        st.warning(
+                            "⚠️ You have an unfinished test. Please resume instead."
+                        )
                         st.stop()
 
-            # Otherwise allow fresh start
-            st.session_state.test_action = "start"
-            st.session_state.test_started = True
+            # Allow fresh start
+            st.session_state["test_action"] = "start"
+            st.session_state["test_started"] = True
+            st.rerun()
 
-
+        # -------------------------
+        # RESUME TEST
+        # -------------------------
         if resume_clicked:
-            st.session_state.test_action = "resume"
-            st.session_state.test_started = True
-
+            st.session_state["test_action"] = "resume"
+            st.session_state["test_started"] = True
+            st.rerun()
 
     # -------------------------
     # 🧠 UX LABELS

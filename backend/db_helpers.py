@@ -1975,17 +1975,12 @@ def get_archived_questions(
 
 
 
-# =====================================================
-#
-# =====================================================
 def reset_test(student_id: int):
-    """
-    Completely reset student test attempts
-    and allow fresh test starts.
-    """
+
     db = get_session()
 
     try:
+
         student = db.query(Student).filter_by(
             id=student_id
         ).first()
@@ -1994,16 +1989,44 @@ def reset_test(student_id: int):
             return False
 
         # -------------------------
-        # Delete ALL progress
+        # Delete grades
+        # -------------------------
+        db.query(SubjectiveGrade).filter(
+            SubjectiveGrade.student_id == student_id
+        ).delete(synchronize_session=False)
+
+        # -------------------------
+        # Delete results
+        # -------------------------
+        db.query(TestResult).filter(
+            TestResult.student_id == student_id
+        ).delete(synchronize_session=False)
+
+        # -------------------------
+        # Delete answers
+        # -------------------------
+        progress_ids = [
+            p.id
+            for p in db.query(StudentProgress.id)
+            .filter(StudentProgress.student_id == student_id)
+            .all()
+        ]
+
+        if progress_ids:
+
+            db.query(StudentAnswer).filter(
+                StudentAnswer.progress_id.in_(progress_ids)
+            ).delete(synchronize_session=False)
+
+        # -------------------------
+        # Delete progress
         # -------------------------
         db.query(StudentProgress).filter(
             StudentProgress.student_id == student_id
-        ).delete(
-            synchronize_session=False
-        )
+        ).delete(synchronize_session=False)
 
         # -------------------------
-        # Re-enable retakes
+        # Reset retake
         # -------------------------
         student.can_retake = True
 
@@ -2012,13 +2035,15 @@ def reset_test(student_id: int):
         return True
 
     except Exception as e:
+
         db.rollback()
         print("RESET ERROR:", e)
+
         return False
 
     finally:
-        db.close()
 
+        db.close()
 
 
 

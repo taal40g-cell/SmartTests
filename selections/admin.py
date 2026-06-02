@@ -592,7 +592,12 @@ def run_admin_mode():
         if uploaded:
             try:
                 df = pd.read_csv(uploaded)
+                st.write(df.columns.tolist())
+                st.write("Columns:", list(df.columns))
+                st.write("Columns:", list(df.columns))
+                st.dataframe(df.head(20))
 
+                st.dataframe(df.head())
                 if "name" not in df.columns:
                     st.error("🚫 CSV must contain a 'name' column.")
                     st.stop()
@@ -2015,8 +2020,8 @@ def run_admin_mode():
                     key="subjective_upload"
             ):
 
-                cleaned_subjective = []
 
+                cleaned_subjective = []
                 # -------------------------
                 # CSV MODE
                 # -------------------------
@@ -2041,20 +2046,83 @@ def run_admin_mode():
                         # -------------------------
                         # AUTO FIX COLUMN
                         # -------------------------
+                        # -------------------------
+                        # FALLBACK FOR NUMBERED QUESTIONS
+                        # -------------------------
                         if "question_text" not in df.columns:
-                            first_col = df.columns[0]
 
                             st.warning(
-                                f"'question_text' column not found, using: '{first_col}'"
+                                "CSV format not detected. Parsing as numbered questions."
                             )
 
-                            df.rename(
-                                columns={
-                                    first_col: "question_text"
-                                },
-                                inplace=True
+                            uploaded_file.seek(0)
+
+                            content = uploaded_file.getvalue().decode(
+                                "utf-8",
+                                errors="ignore"
                             )
 
+                            import re
+
+                            current_question = ""
+
+                            for line in content.splitlines():
+
+                                line = line.strip()
+
+                                if not line:
+                                    continue
+
+                                # New question
+                                if re.match(r"^\d+\.", line):
+
+                                    if current_question.strip():
+                                        cleaned_subjective.append({
+                                            "question": current_question.strip(),
+                                            "marks": 10
+                                        })
+
+                                    current_question = line
+
+                                # Continuation line
+                                else:
+
+                                    current_question += " " + line
+
+                            # Save last question
+                            if current_question.strip():
+                                cleaned_subjective.append({
+                                    "question": current_question.strip(),
+                                    "marks": 10
+                                })
+
+                        else:
+
+                            # Existing CSV processing code
+                            for idx, row in df.iterrows():
+
+                                q_text = str(
+                                    row.get("question_text", "")
+                                ).strip()
+
+                                if (
+                                        not q_text
+                                        or q_text.lower() == "nan"
+                                        or len(q_text) < 15
+                                ):
+                                    continue
+
+                                try:
+                                    marks_val = int(
+                                        row.get("marks", 10)
+                                    )
+                                except Exception:
+                                    marks_val = 10
+
+                                cleaned_subjective.append({
+                                    "question": q_text,
+                                    "marks": marks_val
+                                })
                         # -------------------------
                         # PROCESS ROWS
                         # -------------------------
@@ -2157,9 +2225,15 @@ def run_admin_mode():
                 # -------------------------
                 # 🔍 DUPLICATE CHECK
                 # -------------------------
+                import re
+
                 existing_subj_text = {
 
-                    q.question_text.lower()
+                    re.sub(
+                        r"^\d+\.\s*",
+                        "",
+                        q.question_text.lower().strip()
+                    )
 
                     for q in get_subjective_questions(
                         class_id=class_id,
@@ -2168,15 +2242,22 @@ def run_admin_mode():
                     )
                 }
 
+                st.write("Existing subjective questions:", len(existing_subj_text))
+
                 duplicates = [
 
                     q["question"]
 
                     for q in cleaned_subjective
 
-                    if q["question"].lower()
-                       in existing_subj_text
+                    if re.sub(
+                        r"^\d+\.\s*",
+                        "",
+                        q["question"].lower().strip()
+                    ) in existing_subj_text
                 ]
+
+
 
                 if duplicates:
 
@@ -2191,9 +2272,13 @@ def run_admin_mode():
 
                     q for q in cleaned_subjective
 
-                    if q["question"].lower()
-                       not in existing_subj_text
+                    if re.sub(
+                        r"^\d+\.\s*",
+                        "",
+                        q["question"].lower().strip()
+                    ) not in existing_subj_text
                 ]
+
 
                 # -------------------------
                 # 💾 SAVE TO DB
@@ -2243,6 +2328,8 @@ def run_admin_mode():
 
                 else:
                     st.info("⚠️ No new questions to upload.")
+
+
 
 
 
@@ -2576,17 +2663,26 @@ def run_admin_mode():
                                     start=1
                             ):
 
+                                import re
 
                                 question = item.get(
                                     "question",
                                     f"Question {idx}"
                                 )
 
+                                # Remove leading numbering like:
+                                # 1. Question...
+                                # 12. Question...
+                                question = re.sub(
+                                    r"^\d+\.\s*",
+                                    "",
+                                    str(question)
+                                ).strip()
+
                                 answer = item.get(
                                     "answer",
                                     "No answer"
                                 )
-
                                 # ---------------------------------
                                 # QUESTION + SCORE SIDE BY SIDE
                                 # ---------------------------------
