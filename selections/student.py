@@ -1070,14 +1070,17 @@ def run_student_mode():
         st.session_state.test_type
     )
 
-
-
     # -------------------------
     # 🚦 START BUTTON STATE
     # -------------------------
     start_disabled = (
             (is_submitted and not retake_allowed) or
             (is_locked and not retake_allowed)
+    )
+
+    # 👇 ADD THIS
+    st.warning(
+        f"Reached Start UI after {time.time() - page_start:.2f}s"
     )
 
     # -------------------------
@@ -1133,9 +1136,7 @@ def run_student_mode():
                 disabled=resume_disabled
             )
 
-        # -------------------------
-        # ACTION HANDLING
-        # -------------------------
+
         # -------------------------
         # ACTION HANDLING
         # -------------------------
@@ -1196,14 +1197,14 @@ def run_student_mode():
         ) or 30
 
 
-        # -------------------------
-        # 🔵 START NEW TEST
-        # -------------------------
+
         # -------------------------
         # 🔵 START NEW TEST
         # -------------------------
         if action == "start":
+            import time
 
+            start_test_timer = time.time()
             import random
 
             # -------------------------
@@ -1253,6 +1254,10 @@ def run_student_mode():
                     question_dict["correct_answer"] = None
 
                 normalized_questions.append(question_dict)
+            st.warning(
+                f"Question preparation took {time.time() - start_test_timer:.2f}s"
+            )
+
 
             # ✅ SAVE RANDOMIZED ORDER
             st.session_state.questions = normalized_questions
@@ -2547,7 +2552,13 @@ def run_student_mode():
                             )
                         )
 
+                        t = time.time()
+
                         db.commit()
+
+                        st.warning(
+                            f"Commit took {time.time() - t:.2f}s"
+                        )
 
                         # Save PDF state
                         st.session_state.pdf_ready = True
