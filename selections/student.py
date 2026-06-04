@@ -55,9 +55,7 @@ def run_student_mode():
 
     page_start = time.time()
 
-    st.info(
-        f"Student mode started at {time.strftime('%H:%M:%S')}"
-    )
+
 
     @st.cache_data(ttl=300)
     def cached_users():
@@ -953,9 +951,7 @@ def run_student_mode():
     objective_questions = st.session_state[key_obj]
     subjective_questions = st.session_state[key_subj]
 
-    st.info(
-        f"Objective={len(objective_questions)} | Subjective={len(subjective_questions)}"
-    )
+
 
     # -------------------------
     # AUTO-FIX EMPTY OBJECTIVE
@@ -1070,17 +1066,14 @@ def run_student_mode():
         st.session_state.test_type
     )
 
+
+
     # -------------------------
     # 🚦 START BUTTON STATE
     # -------------------------
     start_disabled = (
             (is_submitted and not retake_allowed) or
             (is_locked and not retake_allowed)
-    )
-
-    # 👇 ADD THIS
-    st.warning(
-        f"Reached Start UI after {time.time() - page_start:.2f}s"
     )
 
     # -------------------------
@@ -1202,9 +1195,7 @@ def run_student_mode():
         # 🔵 START NEW TEST
         # -------------------------
         if action == "start":
-            import time
 
-            start_test_timer = time.time()
             import random
 
             # -------------------------
@@ -1254,10 +1245,6 @@ def run_student_mode():
                     question_dict["correct_answer"] = None
 
                 normalized_questions.append(question_dict)
-            st.warning(
-                f"Question preparation took {time.time() - start_test_timer:.2f}s"
-            )
-
 
             # ✅ SAVE RANDOMIZED ORDER
             st.session_state.questions = normalized_questions
@@ -1285,6 +1272,7 @@ def run_student_mode():
             st.session_state.submitted = False
 
             st.session_state.locked = False
+
 
             # -------------------------
             # Save progress
@@ -1518,44 +1506,6 @@ def run_student_mode():
                 st.session_state.test_started = False
                 st.stop()
 
-        # -------------------------
-        # 💾 CONTINUOUS SAVE (SAFE)
-        # -------------------------
-        if not is_submitted:
-
-            # IMPORTANT: keep DB format consistent
-            details = []
-
-            for q, ans in zip(st.session_state.questions, st.session_state.answers):
-                correct_answer = q.get("correct_answer", "")
-
-                is_correct = (
-                        str(ans).strip().lower()
-                        == str(correct_answer).strip().lower()
-                )
-
-                details.append({
-                    "question_id": q.get("id"),
-                    "question_text": q.get("text", ""),
-                    "selected": ans or "—",
-                    "correct": correct_answer or "—",
-                    "is_correct": is_correct
-                })
-
-            save_progress(
-                access_code=access_code,
-                subject_id=selected_subject_id,
-                class_id=class_id_int,
-                school_id=school_id_int,
-                test_type=st.session_state.test_type,
-                answers=json.dumps(details),
-                current_q=st.session_state.current_q,
-                start_time=st.session_state.start_time,
-                duration=st.session_state.duration,
-                questions=[q["id"] for q in st.session_state.questions],
-                student_id=student_id,
-                submitted=False
-            )
 
 
 
@@ -2074,25 +2024,6 @@ def run_student_mode():
                     "Answers are now locked."
                 )
 
-            # -------------------------
-            # Save answer to DB
-            # -------------------------
-            db = get_session()
-
-            try:
-
-                save_answer(
-                    db=db,
-                    progress_id=record.id,
-                    question_id=q["id"],
-                    answer=answer
-                )
-
-            finally:
-
-                db.close()
-
-
 
             # -------------------------
             # Navigation & Submit Buttons
@@ -2100,15 +2031,30 @@ def run_student_mode():
         col1, col2, col3 = st.columns([1, 1, 1])
 
         with col1:
-            if st.button("⬅️ Previous", disabled=current_q_idx == 0, key=f"prev_{current_q_idx}"):
-                st.session_state.current_q = max(0, current_q_idx - 1)
+            if st.button(
+                    "⬅️ Previous",
+                    disabled=current_q_idx == 0,
+                    key=f"prev_{current_q_idx}"
+            ):
+                st.session_state.current_q = max(
+                    0,
+                    current_q_idx - 1
+                )
+
                 st.rerun()
 
         with col2:
-            if st.button("➡️ Next", disabled=current_q_idx == len(questions) - 1, key=f"next_{current_q_idx}"):
-                st.session_state.current_q = min(len(questions) - 1, current_q_idx + 1)
-                st.rerun()
+            if st.button(
+                    "➡️ Next",
+                    disabled=current_q_idx == len(questions) - 1,
+                    key=f"next_{current_q_idx}"
+            ):
+                st.session_state.current_q = min(
+                    len(questions) - 1,
+                    current_q_idx + 1
+                )
 
+                st.rerun()
         with col3:
 
 
@@ -2552,13 +2498,7 @@ def run_student_mode():
                             )
                         )
 
-                        t = time.time()
-
                         db.commit()
-
-                        st.warning(
-                            f"Commit took {time.time() - t:.2f}s"
-                        )
 
                         # Save PDF state
                         st.session_state.pdf_ready = True
