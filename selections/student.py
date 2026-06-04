@@ -46,7 +46,18 @@ def get_class_name_by_id(class_id: int) -> str:
 # ==============================
 # Main Student Mode
 # ==============================
+# ==============================
+# Main Student Mode
+# ==============================
 def run_student_mode():
+
+    import time
+
+    page_start = time.time()
+
+    st.info(
+        f"Student mode started at {time.strftime('%H:%M:%S')}"
+    )
 
     @st.cache_data(ttl=300)
     def cached_users():
@@ -56,6 +67,7 @@ def run_student_mode():
         st.session_state.users_dict = cached_users()
 
     users_dict = st.session_state.users_dict
+
 
 
     # -------------------------
@@ -907,25 +919,44 @@ def run_student_mode():
     # -------------------------
     # ❓ LOAD QUESTIONS (CACHED)
     # -------------------------
+    import time
+
     key_obj = f"objective_{selected_subject_id}_{class_id_int}_{school_id_int}"
     key_subj = f"subjective_{selected_subject_id}_{class_id_int}_{school_id_int}"
 
     if key_obj not in st.session_state:
+        t0 = time.time()
+
         st.session_state[key_obj] = get_objective_questions(
             class_id=class_id,
             subject_id=selected_subject_id,
             school_id=school_id_int
         ) or []
 
+        st.warning(
+            f"Objective questions load took {time.time() - t0:.2f}s"
+        )
+
     if key_subj not in st.session_state:
+        t0 = time.time()
+
         st.session_state[key_subj] = get_subjective_questions(
             class_id=class_id,
             subject_id=selected_subject_id,
             school_id=school_id_int
         ) or []
 
+        st.warning(
+            f"Subjective questions load took {time.time() - t0:.2f}s"
+        )
+
     objective_questions = st.session_state[key_obj]
     subjective_questions = st.session_state[key_subj]
+
+    st.info(
+        f"Objective={len(objective_questions)} | Subjective={len(subjective_questions)}"
+    )
+
     # -------------------------
     # AUTO-FIX EMPTY OBJECTIVE
     # -------------------------
@@ -963,7 +994,7 @@ def run_student_mode():
 
     if selected_type != st.session_state.test_type:
         st.session_state.test_type = selected_type
-        st.rerun()
+       
 
 
     # -------------------------
@@ -980,6 +1011,11 @@ def run_student_mode():
 
     db = get_session()
     try:
+
+        import time
+
+        start = time.time()
+
         record = db.query(StudentProgress).filter_by(
             student_id=student_id,
             access_code=access_code,
@@ -989,6 +1025,9 @@ def run_student_mode():
             test_type=st.session_state.test_type
         ).first()
 
+        st.warning(
+            f"StudentProgress query took {time.time() - start:.2f}s"
+        )
         # -------------------------
         # CREATE ONLY IF NEEDED
         # -------------------------
@@ -1051,6 +1090,10 @@ def run_student_mode():
     if not st.session_state.get("test_started", False):
 
         # 🔍 Always check DB first
+        import time
+
+        start = time.time()
+
         saved_progress = load_progress(
             access_code=access_code,
             subject_id=selected_subject_id,
@@ -1059,6 +1102,11 @@ def run_student_mode():
             test_type=st.session_state.test_type,
             student_id=student_id
         )
+
+        st.warning(
+            f"load_progress took {time.time() - start:.2f} seconds"
+        )
+
 
         # ✅ Safe default (prevents NameError)
         resume_disabled = False
@@ -1115,7 +1163,7 @@ def run_student_mode():
             # Allow fresh start
             st.session_state["test_action"] = "start"
             st.session_state["test_started"] = True
-            st.rerun()
+
 
         # -------------------------
         # RESUME TEST
@@ -1123,7 +1171,7 @@ def run_student_mode():
         if resume_clicked:
             st.session_state["test_action"] = "resume"
             st.session_state["test_started"] = True
-            st.rerun()
+
 
     # -------------------------
     # 🧠 UX LABELS
