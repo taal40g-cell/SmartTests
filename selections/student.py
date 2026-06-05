@@ -952,9 +952,6 @@ def run_student_mode():
             school_id=school_id_int
         ) or []
 
-        st.warning(
-            f"Objective questions load took {time.time() - t0:.2f}s"
-        )
 
     if key_subj not in st.session_state:
         t0 = time.time()
@@ -965,9 +962,6 @@ def run_student_mode():
             school_id=school_id_int
         ) or []
 
-        st.warning(
-            f"Subjective questions load took {time.time() - t0:.2f}s"
-        )
 
     objective_questions = st.session_state[key_obj]
     subjective_questions = st.session_state[key_subj]
@@ -1105,9 +1099,7 @@ def run_student_mode():
     if not st.session_state.get("test_started", False):
 
         # 🔍 Always check DB first
-        import time
 
-        start = time.time()
 
         saved_progress = load_progress(
             access_code=access_code,
@@ -1173,7 +1165,7 @@ def run_student_mode():
             # Allow fresh start
             st.session_state["test_action"] = "start"
             st.session_state["test_started"] = True
-
+            st.rerun()
 
         # -------------------------
         # RESUME TEST
