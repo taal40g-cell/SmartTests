@@ -891,6 +891,7 @@ def run_student_mode():
         st.info("🚫 No subjects available for your class. Contact admin.")
         st.stop()
 
+
     # -------------------------
     # 📘 SUBJECT SELECTION
     # -------------------------
@@ -911,6 +912,7 @@ def run_student_mode():
     if st.session_state.subject is None:
         st.session_state.subject = selected_subject_name
 
+
     elif st.session_state.subject != selected_subject_name:
         reset_keys = [
             "test_started", "submitted", "answers", "questions",
@@ -929,6 +931,7 @@ def run_student_mode():
             )
 
         st.session_state.subject = selected_subject_name
+        st.rerun()
 
 
     if selected_subject_id is None:
