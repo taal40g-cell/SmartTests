@@ -1700,136 +1700,166 @@ def run_admin_mode():
         # 📂 FILE UPLOAD
         # -------------------------
         uploaded_file = st.file_uploader(
-            "Upload JSON file (Objective Questions)",
-            type=["json"],
+            "Upload Questions",
+            type=["json", "csv", "xlsx"],
             key="objective_file"
         )
 
         # -------------------------
         # 🚀 UPLOAD BUTTON
         # -------------------------
-        if st.button(
-                "✅ Upload Questions",
-                key="confirm_upload_btn"
-        ):
+        if st.button("✅ Upload Questions", key="confirm_upload_btn"):
 
             if not uploaded_file:
-                st.warning("Please upload a JSON file.")
+                st.warning("Please upload a JSON, CSV or Excel file.")
                 st.stop()
 
             try:
+                file_name = uploaded_file.name.lower()
 
+                # =========================
+                # JSON
+                # =========================
+                if file_name.endswith(".json"):
+                    data = json.load(uploaded_file)
 
-                data = json.load(uploaded_file)
+                # =========================
+                # CSV
+                # =========================
+                elif file_name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
 
+                # =========================
+                # EXCEL
+                # =========================
+                elif file_name.endswith(".xlsx"):
+                    df = pd.read_excel(uploaded_file)
+
+                else:
+                    st.error("Unsupported file type.")
+                    st.stop()
+
+                # =========================
+                # Convert CSV/Excel → dict
+                # =========================
+                if file_name.endswith((".csv", ".xlsx")):
+
+                    required_cols = [
+                        "question",
+                        "option_a",
+                        "option_b",
+                        "option_c",
+                        "option_d",
+                        "answer"
+                    ]
+
+                    missing = [c for c in required_cols if c not in df.columns]
+
+                    if missing:
+                        st.error(f"Missing columns: {', '.join(missing)}")
+                        st.stop()
+
+                    data = []
+
+                    for _, row in df.iterrows():
+
+                        options = [
+                            str(row["option_a"]).strip(),
+                            str(row["option_b"]).strip(),
+                            str(row["option_c"]).strip(),
+                            str(row["option_d"]).strip()
+                        ]
+
+                        answer = str(row["answer"]).strip()
+
+                        if any(not opt for opt in options):
+                            st.error("Each question must have 4 options.")
+                            st.stop()
+
+                        if answer not in options:
+                            st.error(f"Answer '{answer}' must match one option.")
+                            st.stop()
+
+                        data.append({
+                            "question": str(row["question"]).strip(),
+                            "options": options,
+                            "answer": answer
+                        })
+
+                # =========================
+                # VALIDATION
+                # =========================
                 if not isinstance(data, list):
-                    st.error(
-                        "Invalid format — file must contain a list of questions."
-                    )
-
+                    st.error("File must contain a list of questions.")
                     st.stop()
 
                 cleaned = []
 
                 for idx, q in enumerate(data, start=1):
 
-                    if not all(
-                            k in q
-                            for k in ["question", "options", "answer"]
-                    ):
-                        st.error(
-                            f"⚠️ Question {idx} missing required fields."
-                        )
-
+                    if not all(k in q for k in ["question", "options", "answer"]):
+                        st.error(f"Question {idx} missing required fields.")
                         st.stop()
 
                     cleaned.append({
-
-                        "question": q["question"].strip(),
-
-                        "options": [
-                            opt.strip()
-                            for opt in q["options"]
-                        ],
-
-                        "answer": q["answer"].strip()
+                        "question": str(q["question"]).strip(),
+                        "options": [str(o).strip() for o in q["options"]],
+                        "answer": str(q["answer"]).strip()
                     })
 
-                # ----------------------
-                # 🔍 CHECK DUPLICATES
-                # ----------------------
-                existing_questions_text = {
-
-                    q.question_text.lower()
-
-                    for q in get_objective_questions(
-                        class_id=class_id,
-                        subject_id=sub["id"],
-                        school_id=school_id
-                    )
-                }
-
-                duplicates = [
-
-                    q["question"]
-
-                    for q in cleaned
-
-                    if q["question"].lower()
-                       in existing_questions_text
-                ]
-
-                if duplicates:
-                    st.warning(
-                        f"⚠️ {len(duplicates)} duplicate question(s) detected. "
-                        "They will be skipped."
-                    )
-
-                cleaned = [
-
-                    q for q in cleaned
-
-                    if q["question"].lower()
-                       not in existing_questions_text
-                ]
-
-                if not cleaned:
-                    st.info("No new questions to upload.")
-                    st.stop()
-
-                # ----------------------
-                # 💾 SAVE TO DATABASE
-                # ----------------------
-                result = handle_uploaded_questions(
-                    class_id=class_id,
-                    subject_id=sub["id"],
-                    valid_questions=cleaned,
-                    school_id=school_id
-                )
-
-                if result.get("success"):
-
-                    st.success(
-                        f"🎯 Uploaded {result['inserted']} new questions "
-                        f"for {class_lookup[class_id].name} - "
-                        f"{sub['name']}."
-                    )
-
-                    st.cache_data.clear()
-
-                    st.rerun()
-
-                else:
-
-                    st.warning(
-                        f"🚫 Upload failed: "
-                        f"{result.get('error', 'Unknown error')}"
-                    )
+                st.success(f"✅ {len(cleaned)} questions validated successfully.")
 
             except Exception as e:
+                st.error(f"🚫 Upload failed: {e}")
+                st.stop()
 
-                st.error(f"🚫 Upload error: {e}")
+            # =====================================================
+            # 💾 SAVE TO DATABASE (RUNS ONLY IF VALIDATION PASSED)
+            # =====================================================
 
+            existing_questions_text = {
+                q.question_text.lower()
+                for q in get_objective_questions(
+                    class_id=class_id,
+                    subject_id=sub["id"],
+                    school_id=school_id
+                )
+            }
+
+            duplicates = [
+                q["question"]
+                for q in cleaned
+                if q["question"].lower() in existing_questions_text
+            ]
+
+            if duplicates:
+                st.warning(f"⚠️ {len(duplicates)} duplicate questions skipped.")
+
+            cleaned = [
+                q for q in cleaned
+                if q["question"].lower() not in existing_questions_text
+            ]
+
+            if not cleaned:
+                st.info("No new questions to upload.")
+                st.stop()
+
+            result = handle_uploaded_questions(
+                class_id=class_id,
+                subject_id=sub["id"],
+                valid_questions=cleaned,
+                school_id=school_id
+            )
+
+            if result.get("success"):
+                st.success(
+                    f"🎯 Uploaded {result['inserted']} questions successfully."
+                )
+                st.cache_data.clear()
+                st.rerun()
+
+            else:
+                st.error(f"🚫 Upload failed: {result.get('error')}")
 
 
 
