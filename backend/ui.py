@@ -676,55 +676,6 @@ def generate_pdf(
 
 
 
-
-
-
-    # =========================================
-    #
-    # =========================================
-
-def get_student_display(student, class_name_map: dict) -> str:
-    """
-    Return a formatted display string for both dict and ORM student.
-    Uses class_id and resolves class name from the map safely.
-    """
-
-    # Extract student info
-    if hasattr(student, "__dict__"):  # ORM object
-        name = getattr(student, "name", "Student")
-        class_id = getattr(student, "class_id", None)
-    else:  # dictionary
-        name = student.get("name", "Student")
-        class_id = student.get("class_id")
-
-    # Resolve class name from the map instead of querying DB
-    class_name = class_name_map.get(class_id, "Unknown")
-
-    return f"Welcome {name} | Class: {class_name.upper()}"
-
-
-# ==============================
-# 🧩 Other Small Helpers
-# ==============================
-def df_download_button(df: pd.DataFrame, label: str, filename: str):
-    """Download CSV button helper"""
-    if df is None or df.empty:
-        st.info("No data available for download.")
-        return
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(label, csv, filename, "text/csv")
-
-def excel_download_buffer(dfs: dict, filename="smarttest_backup.xlsx"):
-    """Return Excel file buffer from dict of dataframes."""
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        for sheet, df in dfs.items():
-            df.to_excel(writer, index=False, sheet_name=sheet[:31])
-    buffer.seek(0)
-    return buffer.getvalue()
-
-
-
 # =====================================================
 #
 # =====================================================

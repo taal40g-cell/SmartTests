@@ -46,16 +46,12 @@ def get_class_name_by_id(class_id: int) -> str:
 # ==============================
 # Main Student Mode
 # ==============================
-# ==============================
-# Main Student Mode
-# ==============================
 def run_student_mode():
+
 
     import time
 
     page_start = time.time()
-
-
 
     @st.cache_data(ttl=300)
     def cached_users():
@@ -65,7 +61,6 @@ def run_student_mode():
         st.session_state.users_dict = cached_users()
 
     users_dict = st.session_state.users_dict
-
 
 
     # -------------------------
@@ -92,9 +87,7 @@ def run_student_mode():
 
         with col1:
 
-            if st.button(
-                "✅ Submit Anyway"
-            ):
+            if st.button("✅ Submit Anyway", key="confirm_submit_anyway"):
 
                 st.session_state.confirm_submit = False
                 st.session_state.final_submit = True
@@ -102,9 +95,7 @@ def run_student_mode():
 
         with col2:
 
-            if st.button(
-                "🚫 Go Back to Test"
-            ):
+            if st.button("🚫 Go Back to Test", key="go_back_test"):
 
                 st.session_state.confirm_submit = False
                 st.rerun()
@@ -152,11 +143,12 @@ def run_student_mode():
 
         st.write("")
 
-        if st.button("⬅ Return to Test Portal"):
+        if st.button("⬅ Return to Test Portal", key="return_test_portal"):
             st.session_state.show_submission_message = False
             st.rerun()
 
         st.stop()
+
 
     # -----------------------------
     # Initialize session defaults
@@ -191,6 +183,8 @@ def run_student_mode():
     st.session_state.setdefault("answered_count", 0)
     st.session_state.setdefault("unanswered", 0)
 
+
+
     # -----------------------------
     # Header & Banner
     # -----------------------------
@@ -198,20 +192,18 @@ def run_student_mode():
     <div style="
         position: sticky;
         top: 0;
-        background-color: #fff3cd;
-        color: #F54927;
+        background-color: #fff8ee;
+        color: #6b4f00;
         padding: 10px;
-        font-weight: bold;
+        font-weight: 600;
         text-align: center;
         z-index: 999;
         border-radius: 8px;
+        border-left: 4px solid #d4a017;
     ">
-    ⚠️ Retakes are controlled by Admins! Submit your test before time runs out
+    📌 Retakes are controlled by Admins. Submit your test before time runs out.
     </div>
     """, unsafe_allow_html=True)
-    st.markdown("###  Student Portal")
-    st.markdown("Welcome to your personalized test center.")
-
 
     # -----------------------------
     # CSS Styling
@@ -630,10 +622,42 @@ def run_student_mode():
             )
 
             if pending_count:
-                st.warning(
-                    f"🟡 You have {pending_count} subjective "
-                    f"test(s) awaiting teacher review."
+                st.markdown(
+                    f"""
+                    <style>
+                    @keyframes pulseAlert {{
+                        0% {{
+                            opacity: 1;
+                        }}
+                        50% {{
+                            opacity: 0.85;
+                        }}
+                        100% {{
+                            opacity: 1;
+                        }}
+                    }}
+
+                    .pending-alert {{
+                        background-color: #eef7ff;
+                        border-left: 5px solid #4da3ff;
+                        color: #0f3d66;
+                        padding: 12px 15px;
+                        border-radius: 8px;
+                        font-weight: 600;
+                        animation: pulseAlert 2s infinite;
+                        margin-bottom: 15px;
+                    }}
+                    </style>
+
+                    <div class="pending-alert">
+                        🔔 You have {pending_count} subjective test(s)
+                        awaiting teacher review.
+                    </div>
+                    """,
+                    unsafe_allow_html=True
                 )
+
+
             # -------------------------
             # SUBJECTIVE RECORDS
             # -------------------------
@@ -720,11 +744,8 @@ def run_student_mode():
                     # -------------------------
 
                     st.write(
-
-                        f"Date: "
-
-                        f"{r.created_at.strftime('%Y-%m-%d %H:%M')}"
-
+                        f"📅 Submitted: "
+                        f"{r.created_at.strftime('%d %b %Y, %I:%M %p')}"
                     )
 
                     # -------------------------
@@ -1021,9 +1042,7 @@ def run_student_mode():
             test_type=st.session_state.test_type
         ).first()
 
-        st.warning(
-            f"StudentProgress query took {time.time() - start:.2f}s"
-        )
+
         # -------------------------
         # CREATE ONLY IF NEEDED
         # -------------------------
@@ -1099,9 +1118,6 @@ def run_student_mode():
             student_id=student_id
         )
 
-        st.warning(
-            f"load_progress took {time.time() - start:.2f} seconds"
-        )
 
 
         # ✅ Safe default (prevents NameError)
@@ -1198,6 +1214,7 @@ def run_student_mode():
 
             import random
 
+
             # -------------------------
             # Get question bank
             # -------------------------
@@ -1207,8 +1224,12 @@ def run_student_mode():
                 else subjective_questions
             )
 
+
+
             # ✅ FORCE REAL LIST
             question_bank = list(question_bank)
+
+
 
             # ✅ TRUE RANDOMIZATION
             random.shuffle(question_bank)
@@ -1220,34 +1241,40 @@ def run_student_mode():
 
             for q in question_bank:
 
-                question_dict = {
-                    "id": q.id,
-                    "text": (
-                            getattr(q, "question_text", None)
-                            or getattr(q, "question", None)
-                            or getattr(q, "text", None)
-                            or "No Question"
-                    ),
-                }
-                if st.session_state.test_type == "objective":
+                if isinstance(q, dict):
 
-                    question_dict["options"] = getattr(q, "options", [])
-
-                    question_dict["correct_answer"] = getattr(
-                        q,
-                        "correct_answer",
-                        ""
-                    )
+                    question_dict = {
+                        "id": q.get("id"),
+                        "text": (
+                                q.get("question_text")
+                                or q.get("question")
+                                or q.get("text")
+                                or "No Question"
+                        ),
+                        "options": q.get("options"),
+                        "correct_answer": q.get("correct_answer", "")
+                    }
 
                 else:
 
-                    question_dict["options"] = None
-                    question_dict["correct_answer"] = None
+                    question_dict = {
+                        "id": q.id,
+                        "text": (
+                                getattr(q, "question_text", None)
+                                or getattr(q, "question", None)
+                                or getattr(q, "text", None)
+                                or "No Question"
+                        ),
+                        "options": getattr(q, "options", []),
+                        "correct_answer": getattr(q, "correct_answer", "")
+                    }
 
                 normalized_questions.append(question_dict)
 
+
             # ✅ SAVE RANDOMIZED ORDER
             st.session_state.questions = normalized_questions
+            st.session_state.test_started = True
 
             # -------------------------
             # Reset state
@@ -1377,13 +1404,22 @@ def run_student_mode():
             # ✅ normalize questions
             normalized_questions = [
                 {
-                    "id": q.id,
-                    "text": q.question_text,
-                    "options": getattr(q, "options", None),
-                    "correct_answer": getattr(q, "correct_answer", "")
+                    "id": q["id"] if isinstance(q, dict) else q.id,
+                    "text": (
+                            q.get("question_text")
+                            or q.get("text")
+                            or "No Question"
+                    ) if isinstance(q, dict) else q.question_text,
+                    "options": (
+                        q.get("options")
+                    ) if isinstance(q, dict) else getattr(q, "options", None),
+                    "correct_answer": (
+                        q.get("correct_answer", "")
+                    ) if isinstance(q, dict) else getattr(q, "correct_answer", "")
                 }
                 for q in question_bank
             ]
+
 
             if saved_questions:
 
@@ -1547,15 +1583,19 @@ def run_student_mode():
             st.session_state.marked_for_review = set()
             st.session_state.paste_count = 0
 
+
+
         # =============================
         # ⏱️ TIMER (BEFORE RENDER)
         # =============================
         now = datetime.now()
 
         # ✅ FIX: ensure test is initialized
-        if not st.session_state.get("test_end_time"):
-            st.warning("Initializing test...")
-            st.stop()  # ⛔ stops execution BEFORE crash
+        if "test_end_time" not in st.session_state:
+            st.session_state.test_end_time = datetime.now() + timedelta(minutes=30)
+
+        if "start_time" not in st.session_state:
+            st.session_state.start_time = datetime.now()
 
         remaining_seconds = int(
             (st.session_state.test_end_time - now).total_seconds()
@@ -1628,10 +1668,16 @@ def run_student_mode():
         # -------------------------
         # ⛔ Auto-submit when time is up
         # -------------------------
+        # ==============================
+        # ⏰ AUTO SUBMIT (OPTIMIZED)
+        # ==============================
         if remaining_seconds <= 0 and not is_submitted:
 
             st.warning("⏰ Time is up! Submitting your test automatically...")
 
+            # ------------------------------
+            # Safe timestamp handling
+            # ------------------------------
             start_time_ts = (
                 st.session_state.start_time.timestamp()
                 if isinstance(st.session_state.start_time, datetime)
@@ -1640,7 +1686,9 @@ def run_student_mode():
 
             subject_id = selected_subject["id"]
 
-            # 1️⃣ Save final progress (submitted=True)
+            # ------------------------------
+            # 1️⃣ Save final progress (single source of truth)
+            # ------------------------------
             save_progress(
                 access_code=access_code,
                 student_id=student_id,
@@ -1652,12 +1700,15 @@ def run_student_mode():
                 current_q=st.session_state.current_q,
                 start_time=start_time_ts,
                 duration=st.session_state.duration,
-                questions=[q.id for q in st.session_state.questions],
+                questions=[q["id"] if isinstance(q, dict) else q.id for q in st.session_state.questions],
                 submitted=True
             )
 
-            # 2️⃣ Persist answers safely
+            # ------------------------------
+            # 2️⃣ Persist answers (FAST BULK UPDATE)
+            # ------------------------------
             db = get_session()
+
             try:
                 progress = db.query(StudentProgress).filter_by(
                     student_id=student_id,
@@ -1668,32 +1719,57 @@ def run_student_mode():
                 ).first()
 
                 if progress:
-                    for i, q in enumerate(st.session_state.questions):
 
-                        ans = st.session_state.answers[i] if i < len(st.session_state.answers) else ""
+                    # --------------------------
+                    # BULK FETCH existing answers (NO LOOP QUERIES)
+                    # --------------------------
+                    existing_map = {
+                        a.question_id: a
+                        for a in db.query(StudentAnswer)
+                        .filter_by(progress_id=progress.id)
+                        .all()
+                    }
 
-                        existing = db.query(StudentAnswer).filter_by(
-                            progress_id=progress.id,
-                            question_id=q["id"]
-                        ).first()
+                    questions = st.session_state.questions
+                    answers = st.session_state.answers
+
+                    # --------------------------
+                    # UPDATE IN MEMORY ONLY
+                    # --------------------------
+                    for i in range(len(questions)):
+
+                        q = questions[i]
+                        ans = answers[i] if i < len(answers) else ""
+
+                        qid = q["id"] if isinstance(q, dict) else q.id
+
+                        existing = existing_map.get(qid)
 
                         if existing:
                             existing.answer = ans
                         else:
                             db.add(StudentAnswer(
                                 progress_id=progress.id,
-                                question_id=q["id"],
+                                question_id=qid,
                                 answer=ans
                             ))
 
                     db.commit()
 
+            except Exception as e:
+                db.rollback()
+                print("Auto-submit error:", e)
+
             finally:
                 db.close()
 
+            # ------------------------------
+            # 3️⃣ End session cleanly
+            # ------------------------------
             st.success("✅ Test submitted automatically.")
             st.session_state.test_started = False
             st.stop()
+
 
         # -------------------------
         # Render current question
@@ -1717,6 +1793,7 @@ def run_student_mode():
             st.session_state.current_q,
             st.session_state.answers
         )
+
 
         q = questions[current_q_idx]
         question_text = q.get("text", "No question text")
@@ -2034,31 +2111,22 @@ def run_student_mode():
             if st.button(
                     "⬅️ Previous",
                     disabled=current_q_idx == 0,
-                    key=f"prev_{current_q_idx}"
+                    key="prev_btn"
             ):
-                st.session_state.current_q = max(
-                    0,
-                    current_q_idx - 1
-                )
-
+                st.session_state.current_q -= 1
                 st.rerun()
 
         with col2:
             if st.button(
                     "➡️ Next",
-                    disabled=current_q_idx == len(questions) - 1,
-                    key=f"next_{current_q_idx}"
+                    disabled=current_q_idx >= len(questions) - 1,
+                    key="next_btn"
             ):
-                st.session_state.current_q = min(
-                    len(questions) - 1,
-                    current_q_idx + 1
-                )
-
+                st.session_state.current_q += 1
                 st.rerun()
+
         with col3:
-
-
-            # -------------------------
+          # -------------------------
             # 1️⃣ User clicks submit
             # -------------------------
             if st.button(
