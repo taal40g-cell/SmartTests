@@ -183,7 +183,22 @@ def run_student_mode():
     st.session_state.setdefault("answered_count", 0)
     st.session_state.setdefault("unanswered", 0)
 
-
+    # -----------------------------
+    # Student Hub Header
+    # -----------------------------
+    st.markdown("""
+    <div style="font-size:28px;font-weight:700;color:#1f2937;">
+    🎓 Student Hub
+    </div>
+    <div style="
+        width:180px;
+        height:4px;
+        background:#4CAF50;
+        border-radius:4px;
+        margin-top:4px;
+        margin-bottom:20px;
+    "></div>
+    """, unsafe_allow_html=True)
 
     # -----------------------------
     # Header & Banner
@@ -200,6 +215,7 @@ def run_student_mode():
         z-index: 999;
         border-radius: 8px;
         border-left: 4px solid #d4a017;
+        margin-bottom:15px;
     ">
     📌 Retakes are controlled by Admins. Submit your test before time runs out.
     </div>
@@ -209,15 +225,29 @@ def run_student_mode():
     # CSS Styling
     # -----------------------------
     st.markdown("""
-        <style>
-        .small-input input, .small-input select { width: 150px !important; padding: 6px; font-size: 14px; }
-        div[data-baseweb="input"], div[data-baseweb="select"] { width: 220px !important; margin-left: 0 !important; }
-        .card { padding: 1rem; margin-top: 0.8rem; border-radius: 10px; border: 1px solid #ddd; background-color: #fafafa; box-shadow: 1px 1px 4px rgba(0,0,0,0.08); }
-        </style>
+    <style>
+    .small-input input, .small-input select {
+        width: 150px !important;
+        padding: 6px;
+        font-size: 14px;
+    }
+
+    div[data-baseweb="input"],
+    div[data-baseweb="select"] {
+        width: 220px !important;
+        margin-left: 0 !important;
+    }
+
+    .card {
+        padding: 1rem;
+        margin-top: 0.8rem;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        background-color: #fafafa;
+        box-shadow: 1px 1px 4px rgba(0,0,0,0.08);
+    }
+    </style>
     """, unsafe_allow_html=True)
-
-
-
     # -------------------------
     # LOGIN (School + Access Code)
     # -------------------------
