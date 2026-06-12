@@ -421,6 +421,7 @@ def run_admin_mode():
                 format_func=lambda s: f"{s.name} (Code: {s.code}) — ID {s.id}"
             )
 
+
             if st.button("Delete Selected School"):
                 try:
                     # 🚨 SAFETY: prevent deleting currently active school
@@ -592,12 +593,7 @@ def run_admin_mode():
         if uploaded:
             try:
                 df = pd.read_csv(uploaded)
-                st.write(df.columns.tolist())
-                st.write("Columns:", list(df.columns))
-                st.write("Columns:", list(df.columns))
                 st.dataframe(df.head(20))
-
-                st.dataframe(df.head())
                 if "name" not in df.columns:
                     st.error("🚫 CSV must contain a 'name' column.")
                     st.stop()
@@ -615,6 +611,7 @@ def run_admin_mode():
                 if not students_list:
                     st.warning("⚠️ No valid student names found in file.")
                     st.stop()
+
 
                 result = bulk_add_students_db(
                     students_list,
@@ -1514,10 +1511,20 @@ def run_admin_mode():
             else:
                 st.info("No subjects found for this class.")
 
-
         st.markdown("---")
-        new_subject = st.text_input("➕ Add New Subject", key="new_subject_input")
+
+        if st.session_state.get("clear_subject_input", False):
+            st.session_state["new_subject_input"] = ""
+            st.session_state["clear_subject_input"] = False
+
+        new_subject = st.text_input(
+            "➕ Add New Subject",
+            key="new_subject_input"
+        )
+
         if st.button("Add Subject", key="add_subject_btn"):
+
+
             name = (new_subject or "").strip()
             if not name:
                 st.warning("Enter a valid subject name.")
@@ -1540,9 +1547,14 @@ def run_admin_mode():
                     db.add(new_subject)
                     db.commit()
 
-                    st.success(f"✅ Subject '{name}' added successfully.")
-                    st.rerun()
+                    st.session_state["subject_msg"] = (
+                        "success",
+                        f"✅ Subject '{name}' added successfully."
+                    )
 
+                    st.session_state["clear_subject_input"] = True
+
+                    st.rerun()
 
 
                 except IntegrityError:
@@ -1816,9 +1828,8 @@ def run_admin_mode():
             # =====================================================
             # 💾 SAVE TO DATABASE (RUNS ONLY IF VALIDATION PASSED)
             # =====================================================
-
             existing_questions_text = {
-                q.question_text.lower()
+                q["question"].lower()
                 for q in get_objective_questions(
                     class_id=class_id,
                     subject_id=sub["id"],

@@ -1,0 +1,255 @@
+def render_student_login():
+
+    if st.session_state.get("logged_in", False):
+        return st.session_state.get("student")
+
+    db = get_session()
+
+    try:
+        schools = db.query(School).filter(
+            School.is_system == False
+        ).all()
+
+    finally:
+        db.close()
+
+    if not schools:
+        st.warning("❌ No schools found. Contact admin.")
+        return None
+
+    school_map = {
+        s.name: s.id
+        for s in schools
+    }
+
+    with st.form("student_login"):
+
+        selected_school_name = st.selectbox(
+            "Select School",
+            options=list(school_map.keys()),
+            index=None,
+            placeholder="-- Select School --"
+        )
+
+        access_code_input = st.text_input(
+            "Access Code",
+            placeholder="Code issued by Admin"
+        )
+
+        login_btn = st.form_submit_button(
+            "Login"
+        )
+
+    if not login_btn:
+        return None
+
+    # login validation code...
+
+
+
+# =========================================================
+# 📊 RESULTS CENTER
+# =========================================================
+def render_results_center():
+
+    from sqlalchemy.orm import joinedload
+
+    with st.sidebar:
+
+        st.header("📊 Results Center")
+
+        school_id = st.session_state.get("school_id")
+        student_id = st.session_state.get("student_id")
+
+        objective_records = []
+        subjective_records = []
+        records = []
+        stud = None
+
+        if school_id and student_id:
+
+            db = get_session()
+
+            try:
+
+                stud = (
+                    db.query(Student)
+                    .filter(
+                        Student.id == student_id,
+                        Student.school_id == school_id
+                    )
+                    .first()
+                )
+
+                if stud:
+
+                    records = (
+                        db.query(StudentProgress)
+                        .options(
+                            joinedload(
+                                StudentProgress.subject
+                            )
+                        )
+                        .filter(
+                            StudentProgress.student_id == student_id,
+                            StudentProgress.school_id == school_id,
+                            StudentProgress.submitted == True
+                        )
+                        .order_by(
+                            StudentProgress.created_at.desc()
+                        )
+                        .all()
+                    )
+
+            finally:
+                db.close()
+
+            objective_records = [
+                r for r in records
+                if r.test_type == "objective"
+            ]
+
+            subjective_records = [
+                r for r in records
+                if r.test_type == "subjective"
+            ]
+
+        # =====================================================
+        # OBJECTIVE TESTS
+        # =====================================================
+
+        st.markdown("### 📘 Objective Tests")
+
+        if not objective_records:
+
+            st.caption(
+                "No objective tests yet."
+            )
+
+        else:
+
+            for r in objective_records:
+
+                subject_name = (
+                    r.subject.name
+                    if r.subject
+                    else "Unknown"
+                )
+
+                details = normalize_objective(
+                    parse_json_field(
+                        r.answers
+                    )
+                )
+
+                total_q = len(details)
+
+                correct = sum(
+                    1
+                    for d in details
+                    if d.get(
+                        "is_correct",
+                        False
+                    )
+                )
+
+                percent = (
+                    correct / total_q * 100
+                    if total_q
+                    else 0
+                )
+
+                with st.expander(
+                    f"{subject_name} — {int(percent)}%"
+                ):
+
+                    st.write(
+                        f"Score: {correct}/{total_q}"
+                    )
+
+                    st.write(
+                        f"Date: "
+                        f"{r.created_at.strftime('%Y-%m-%d %H:%M')}"
+                    )
+
+                    if st.toggle(
+                        "View Breakdown",
+                        key=f"obj_{r.id}"
+                    ):
+
+                        for i, d in enumerate(
+                            details,
+                            start=1
+                        ):
+
+                            st.markdown(
+                                f"**Q{i}**"
+                            )
+
+                            st.write(
+                                d["question_text"]
+                            )
+
+                            st.write(
+                                f"Your Answer: "
+                                f"{d['selected']}"
+                            )
+
+                            st.write(
+                                f"Correct: "
+                                f"{d['correct']}"
+                            )
+
+                            st.write(
+                                "✅ Correct"
+                                if d["is_correct"]
+                                else "❌ Wrong"
+                            )
+
+                            st.markdown("---")
+
+                    pdf_bytes = generate_pdf(
+                        name=stud.name,
+                        class_name=st.session_state.get(
+                            "class_name",
+                            "Unknown Class"
+                        ),
+                        subject=subject_name,
+                        correct=correct,
+                        total=total_q,
+                        percent=percent,
+                        details=details,
+                        school_name=st.session_state.get(
+                            "school_name"
+                        ),
+                        school_id=school_id,
+                        test_type="objective"
+                    )
+
+                    st.download_button(
+                        "📄 Download PDF",
+                        pdf_bytes,
+                        file_name=(
+                            f"{stud.name}_"
+                            f"{subject_name}_objective.pdf"
+                        ),
+                        mime="application/pdf",
+                        key=f"obj_pdf_{r.id}"
+                    )
+
+        st.markdown("---")
+
+        # =====================================================
+        # SUBJECTIVE TESTS
+        # =====================================================
+
+        st.markdown(
+            "### ✍️ Subjective Tests"
+        )
+
+        if not subjective_records:
+
+            st.caption(
+                "No subjective tests yet."
+            )
+
