@@ -129,8 +129,8 @@ ROLE_TABS = {
         "🛡️ Manage Admins",
         "📚 Manage Subjects",
         "🔑 Change Password",
-        "📤 Upload Questions",
-        "✍️ Add Subjective Questions",
+        "📤 Upload Objective Quests",
+        "✍️ Upload Subjective Quests",
         "✍️ Review Subj Questions",   # <-- new tab
         "🗑️ Delete Questions",
         "🗂️ Archive / Restore Questions",
@@ -150,8 +150,8 @@ ROLE_TABS = {
     "👥 Manage Students",
     "📚 Manage Subjects",
     "🔑 Change Password",
-    "📤 Upload Questions",
-    "✍️ Add Subjective Questions",
+    "📤 Upload Objective Quests",
+    "✍️ Upload Subjective Quests",
     "✍️ Review Subj Questions",
     "🗑️ Delete Questions",
     "🗂️ Archive / Restore Questions",
@@ -166,8 +166,8 @@ ROLE_TABS = {
 
     "teacher": [
         "👥 Manage Students",
-        "📤 Upload Questions",
-        "✍️ Add Subjective Questions",
+        "📤 Upload Objective Quests",
+        "✍️ Upload Subjective Quests",
         "✍️ Review Subj Questions",
         "🏆 View Leaderboard",
         "🚨 Anti-Cheat Logs",
@@ -1623,9 +1623,9 @@ def run_admin_mode():
     # -----------------------
     # 📤 Upload Questions (Per School)
     # -----------------------
-    elif selected_tab == "📤 Upload Questions":
+    elif selected_tab == "📤 Upload Objective Quests":
 
-        st.subheader("📤 Upload Questions to Database")
+        st.subheader("📤 Upload Objective Questions")
 
         # -------------------------
         # 🏫 GLOBAL SCHOOL (SINGLE SOURCE)
@@ -1878,9 +1878,9 @@ def run_admin_mode():
     # =========================================================
     # ✍️ SUBJECTIVE QUESTIONS (SYNCED + SAFE)
     # =========================================================
-    elif selected_tab == "✍️ Add Subjective Questions":
+    elif selected_tab == "✍️ Upload Subjective Quests":
 
-        st.subheader("✍️ Add Subjective Questions")
+        st.subheader("✍️ Upload Subjective Questions")
 
         # =====================================================
         # 🏫 GLOBAL SCHOOL (NO SECOND SELECTOR)
