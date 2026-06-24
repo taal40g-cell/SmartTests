@@ -391,6 +391,11 @@ def force_submit_test(reason="Violation detected"):
     st.error(f"🚫 Test auto-submitted: {reason}")
     st.stop()
 
+
+
+
+
+
 def log_anti_cheat_event(progress_id, student_id, subject_id, school_id, test_type, event_type):
 
     db = get_session()
@@ -888,11 +893,15 @@ def render_student_login():
         "student_id": student["id"],
         "school_id": student["school_id"],
         "class_id": student["class_id"],
+        "access_code": student["access_code"],
         "class_name": class_name,
         "school_name": school_name,
         "subject": None
 
     })
+    st.write("LOGIN SAVED ACCESS CODE:")
+    st.write(st.session_state.get("access_code"))
+
 
     reset_keys = [
         "test_started",
@@ -911,7 +920,14 @@ def render_student_login():
     for k in reset_keys:
         st.session_state.pop(k, None)
 
+    st.write("LOGIN SAVING ACCESS CODE:")
+    st.write(student.get("access_code"))
+
+    st.write("SESSION AFTER LOGIN:")
+    st.write(dict(st.session_state))
+
     st.rerun()
+
 
 
 
@@ -1095,21 +1111,33 @@ def restore_test_session(
     else:
         st.session_state.questions = normalized_questions
 
-    saved_answers = saved_progress.get(
-        "answers",
-        [""] * len(st.session_state.questions)
-    )
+
+    # -------------------------
+    # 🔁 NORMALIZE ANSWERS TO DICT
+    # -------------------------
+    saved_answers = saved_progress.get("answers", {})
 
     if isinstance(saved_answers, str):
-        try:
-            saved_answers = json.loads(saved_answers)
-        except:
-            saved_answers = [""] * len(st.session_state.questions)
+        saved_answers = json.loads(saved_answers)
 
-    if not isinstance(saved_answers, list):
-        saved_answers = [""] * len(st.session_state.questions)
+    # OLD FORMAT: list of {question_id, selected}
+    if isinstance(saved_answers, list):
+        saved_answers = {
+            str(item["question_id"]): item.get("selected", "")
+            for item in saved_answers
+            if isinstance(item, dict)
+        }
+
+    # SAFETY: ensure dict
+    if not isinstance(saved_answers, dict):
+        saved_answers = {}
 
     st.session_state.answers = saved_answers
+    st.write("RESTORE SAVED ANSWERS:")
+    st.write(saved_answers)
+
+    st.write("SESSION ANSWERS AFTER RESTORE:")
+    st.write(st.session_state.answers)
 
     st.session_state.current_q = min(
         max(saved_progress.get("current_q", 0), 0),
@@ -1131,6 +1159,9 @@ def restore_test_session(
 
     st.session_state.auto_submitted = False
     st.session_state.test_action = None
+
+
+
 
 
 def calculate_remaining_time():
@@ -1189,11 +1220,22 @@ def get_or_create_student_progress(
             db.commit()
             db.refresh(record)
 
-        return record
+        return {
+            "id": record.id,
+            "student_id": record.student_id,
+            "access_code": record.access_code,
+            "subject_id": record.subject_id,
+            "class_id": record.class_id,
+            "school_id": record.school_id,
+            "test_type": record.test_type,
+            "start_time": record.start_time,
+            "duration": record.duration,
+            "submitted": record.submitted,
+            "locked": record.locked
+        }
 
     finally:
         db.close()
-
 
 
 
@@ -1301,6 +1343,9 @@ def get_duration_minutes(
 
 
 
+
+
+
 def render_test_entry_controls(
     access_code,
     subject_id,
@@ -1331,3 +1376,94 @@ def render_test_entry_controls(
     handle_test_actions(start_clicked, resume_clicked, saved_progress)
 
     return saved_progress
+
+
+
+
+def persist_progress():
+
+    answers = st.session_state.get("answers") or {}
+    questions = st.session_state.get("questions") or []
+
+    required = [
+        "access_code",
+        "student_id",
+        "subject_id",
+        "class_id",
+        "school_id",
+        "test_type",
+    ]
+
+    missing = [k for k in required if not st.session_state.get(k)]
+
+    print("persist_progress missing:", missing)
+
+    if missing:
+        print("persist_progress EXITING")
+        return
+
+    # -------------------------
+    # Prevent duplicate saves
+    # -------------------------
+    import json
+
+    state = (
+        st.session_state.get("current_q", 0),
+        json.dumps(answers, sort_keys=True)
+    )
+
+
+    if st.session_state.get("_last_saved_state") == state:
+        print("persist_progress SKIPPED")
+        return
+
+    st.session_state["_last_saved_state"] = state
+
+    print("========== PERSIST ==========")
+
+    print(
+        "access_code:",
+        st.session_state.get("access_code")
+    )
+
+    print(
+        "student_id:",
+        st.session_state.get("student_id")
+    )
+
+    print(
+        "current_q:",
+        st.session_state.get("current_q")
+    )
+
+    save_progress(
+        access_code=st.session_state.get("access_code"),
+
+        student_id=st.session_state.get("student_id"),
+
+        subject_id=st.session_state.get("subject_id"),
+
+        class_id=st.session_state.get("class_id"),
+
+        school_id=st.session_state.get("school_id"),
+
+        test_type=st.session_state.get("test_type"),
+
+        answers=answers,
+
+        current_q=st.session_state.get("current_q", 0),
+
+        start_time=st.session_state.get("start_time"),
+
+        duration=st.session_state.get("duration"),
+
+        questions=[
+            q.get("id")
+            for q in questions
+            if isinstance(q, dict)
+        ],
+
+        submitted=False,
+    )
+
+

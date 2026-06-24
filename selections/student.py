@@ -19,8 +19,8 @@ from backend.helpers import (
     get_duration_minutes,
     get_or_create_student_progress,
     load_question_cache,
-    render_test_type_selector,
-    render_test_entry_controls,
+    render_test_type_selector,persist_progress,
+    render_test_entry_controls,persist_progress
 
 )
 from backend.db_helpers import (
@@ -39,17 +39,39 @@ from backend.models import (SubjectiveQuestion,AntiCheatLog,TestResult,School,
 StudentProgress,Class,StudentAnswer)
 
 
-@st.cache_data(ttl=300)
-def get_class_name_by_id(class_id: int) -> str:
-    if not class_id:
-        return "Unknown"
+# -------------------------
+# Confirm Submission Dialog
+# Define ONCE
+# -------------------------
+@st.dialog("⚠️ Confirm Submission")
+def confirm_submit_dialog():
+    unanswered = st.session_state.get(
+        "unanswered",
+        0
+    )
 
-    db = get_session()
-    try:
-        cls = db.query(Class).get(class_id)  # <-- use Class, not Classes
-        return cls.name if cls else "Unknown"
-    finally:
-        db.close()
+    st.write(
+        f"You have **{unanswered} unanswered questions.**"
+    )
+
+    st.write(
+        "Do you want to submit anyway?"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        if st.button("✅ Submit Anyway", key="confirm_submit_anyway"):
+            st.session_state.confirm_submit = False
+            st.session_state.final_submit = True
+            st.rerun()
+
+    with col2:
+
+        if st.button("🚫 Go Back to Test", key="go_back_test"):
+            st.session_state.confirm_submit = False
+            st.rerun()
 
 
 # ==============================
@@ -70,45 +92,6 @@ def run_student_mode():
         st.session_state.users_dict = cached_users()
 
     users_dict = st.session_state.users_dict
-
-
-    # -------------------------
-    # Confirm Submission Dialog
-    # Define ONCE
-    # -------------------------
-    @st.dialog("⚠️ Confirm Submission")
-    def confirm_submit_dialog():
-
-        unanswered = st.session_state.get(
-            "unanswered",
-            0
-        )
-
-        st.write(
-            f"You have **{unanswered} unanswered questions.**"
-        )
-
-        st.write(
-            "Do you want to submit anyway?"
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-
-            if st.button("✅ Submit Anyway", key="confirm_submit_anyway"):
-
-                st.session_state.confirm_submit = False
-                st.session_state.final_submit = True
-                st.rerun()
-
-        with col2:
-
-            if st.button("🚫 Go Back to Test", key="go_back_test"):
-
-                st.session_state.confirm_submit = False
-                st.rerun()
-
 
 
     # =============================
@@ -166,15 +149,15 @@ def run_student_mode():
         "submitted": False,
         "logged_in": False,
         "student": {},
-        "answers": [],
+        "answers": {},  # dict keyed by question_id
         "current_q": 0,
         "current_page": 0,
         "questions": [],
         "subject": None,
-        "marked_for_review": set(),
+        "marked_for_review": set(),  # IMPORTANT FIX (not list)
         "duration": None,
         "start_time": None,
-        "test_end_time": None,  # ✅ Add this line
+        "test_end_time": None,
         "five_min_warned": False,
         "saved_to_db": False,
         "last_auto_save": 0
@@ -186,10 +169,28 @@ def run_student_mode():
     # -------------------------
     # Session state defaults
     # -------------------------
+
     st.session_state.setdefault("confirm_submit", False)
     st.session_state.setdefault("final_submit", False)
     st.session_state.setdefault("answered_count", 0)
     st.session_state.setdefault("unanswered", 0)
+
+    # -------------------------
+    # Navigation core state (MISSING PIECE)
+    # -------------------------
+    st.session_state.setdefault("current_q", 0)
+    st.session_state.setdefault("answers", {})
+    st.session_state.setdefault("questions", [])
+
+    # -------------------------
+    # Identity (IMPORTANT for persist_progress)
+    # -------------------------
+    st.session_state.setdefault("access_code", None)
+    st.session_state.setdefault("student_id", None)
+    st.session_state.setdefault("subject_id", None)
+    st.session_state.setdefault("class_id", None)
+    st.session_state.setdefault("school_id", None)
+
 
     # -----------------------------
     # Student Hub Header
@@ -257,36 +258,24 @@ def run_student_mode():
     </style>
     """, unsafe_allow_html=True)
 
-
     # =========================================================
     # 📊 STUDENT MODE ENTRY POINT
     # =========================================================
 
-    student = render_student_login()
+    # Show login page if needed
+    render_student_login()
 
-    # -------------------------
-    # LOGIN GATE
-    # -------------------------
-    if not student:
-        st.stop()
-
-    # -------------------------
-    # SESSION INITIALIZATION (ONLY ONCE)
-    # -------------------------
-    if not st.session_state.get("logged_in"):
-        st.session_state.update({
-            "logged_in": True,
-            "student": student,
-            "student_id": student["id"],
-            "school_id": student["school_id"],
-            "class_id": student["class_id"],
-            "subject": None
-        })
-
-    # -------------------------
-    # SOURCE OF TRUTH (SESSION ONLY)
-    # -------------------------
+    # Use session as source of truth
     student = st.session_state.get("student")
+
+    st.write("SESSION STUDENT:")
+    st.write(student)
+
+    st.write("SESSION ACCESS CODE:")
+    st.write(st.session_state.get("access_code"))
+
+    st.write("SESSION LOGGED IN:")
+    st.write(st.session_state.get("logged_in"))
 
     if not student:
         st.info("🚫 Student session not initialized.")
@@ -319,11 +308,20 @@ def run_student_mode():
     # =========================================================
     if "classes" not in st.session_state:
         db = get_session()
+
         try:
-            st.session_state.classes = db.query(Class).all()
+            classes = db.query(Class).all()
+
+            st.session_state.classes = [
+                {
+                    "id": c.id,
+                    "name": c.name
+                }
+                for c in classes
+            ]
+
         finally:
             db.close()
-
     # =========================================================
     # 📚 LOAD SUBJECTS (CACHE)
     # =========================================================
@@ -358,6 +356,9 @@ def run_student_mode():
     # =========================================================
     # 📘 SUBJECT SELECTION
     # =========================================================
+    # =========================================================
+    # 📘 SUBJECT SELECTION
+    # =========================================================
     st.markdown("#### 📘 Select Subject")
 
     selected_subject = st.selectbox(
@@ -370,6 +371,13 @@ def run_student_mode():
     selected_subject_id = selected_subject.get("id")
     selected_subject_name = selected_subject.get("name")
 
+    # ✅ IMPORTANT
+    st.session_state.subject_id = selected_subject_id
+
+    st.write(
+        "SESSION subject_id:",
+        st.session_state.get("subject_id")
+    )
     # =========================================================
     # 🔄 SUBJECT SWITCH RESET
     # =========================================================
@@ -437,18 +445,31 @@ def run_student_mode():
 
     student_id = student_info["id"]
 
+    # -------------------------
+    # Create progress only once
+    # -------------------------
+    if "progress_record" not in st.session_state:
+        st.session_state.progress_record = (
+            get_or_create_student_progress(
+                student_id=student_id,
 
-    record = get_or_create_student_progress(
-        student_id=student_id,
-        access_code=access_code,
-        subject_id=selected_subject_id,
-        class_id=class_id_int,
-        school_id=school_id_int,
-        test_type=st.session_state.test_type
-    )
+                access_code=access_code,
 
-    is_locked = record.locked
-    is_submitted = record.submitted
+                subject_id=selected_subject_id,
+
+                class_id=class_id_int,
+
+                school_id=school_id_int,
+
+                test_type=st.session_state.test_type
+            )
+        )
+
+    record = st.session_state.progress_record
+
+
+    is_locked = record.get("locked", False)
+    is_submitted = record.get("submitted", False)
 
     # -------------------------
     # 🔁 RETAKE LOGIC
@@ -503,6 +524,7 @@ def run_student_mode():
 # -----------------------------------
 # start test
 # -----------------------------------
+
         if action == "start":
 
             # -------------------------
@@ -556,7 +578,10 @@ def run_student_mode():
             # -------------------------
             # Reset state
             # -------------------------
-            st.session_state.answers = [""] * len(normalized_questions)
+            st.session_state.answers = {
+                str(q["id"]): ""
+                for q in normalized_questions
+            }
 
             st.session_state.current_q = 0
 
@@ -577,45 +602,17 @@ def run_student_mode():
 
             st.session_state.locked = False
 
-
             # -------------------------
             # Save progress
             # -------------------------
             t0 = time.time()
 
-            save_progress(
-                access_code=access_code,
-                subject_id=selected_subject_id,
-                class_id=class_id_int,
-                school_id=school_id_int,
-                test_type=st.session_state.test_type,
-                answers=json.dumps([
-                    {
-                        "question_id": q["id"],
-                        "selected": "",
-                        "correct": "",
-                        "is_correct": False
-                    }
-                    for q in normalized_questions
-                ]),
-                current_q=0,
-                start_time=st.session_state.start_time,
-                duration=st.session_state.duration,
-                questions=json.dumps([
-                    q["id"]
-                    for q in normalized_questions
-                ]),
-                student_id=student_id,
-                submitted=False
-            )
+            persist_progress()
 
-            st.write(
-                f"⏱ save_progress: {time.time() - t0:.3f} sec"
-            )
+            st.write(f"⏱ save_progress: {time.time() - t0:.3f} sec")
             st.session_state.test_action = None
 
             st.rerun()
-
 
         # -------------------------
         # 🟩 RESUME TEST
@@ -633,34 +630,81 @@ def run_student_mode():
                 student_id=student_id
             )
 
-            st.write(
-                f"⏱ load_progress: {time.time() - t0:.3f} sec"
-            )
-
-            # 🚫 No progress found
             if not saved_progress:
                 st.warning("⚠️ No unfinished test to resume.")
                 st.session_state.test_started = False
                 st.session_state.test_action = None
                 st.stop()
 
-            # 🚫 Already submitted
             if saved_progress.get("submitted", False):
                 st.warning("⚠️ This test was already submitted.")
-                st.session_state.test_started = False
-                st.session_state.test_action = None
                 st.stop()
 
-            saved_start_time = saved_progress.get("start_time")
-            saved_duration = saved_progress.get("duration")
+            # -------------------------
+            # TIME RESTORE
+            # -------------------------
+            start_time = saved_progress.get("start_time")
+            duration = saved_progress.get("duration", 0)
 
-            # 🚫 Corrupt or empty timing data
-            if not saved_start_time or not saved_duration:
-                st.warning("⚠️ No valid test session to resume.")
-                st.session_state.test_started = False
-                st.session_state.test_action = None
-                st.stop()
+            if isinstance(start_time, str):
+                start_time = datetime.fromisoformat(start_time)
+            elif isinstance(start_time, (int, float)):
+                start_time = datetime.fromtimestamp(start_time)
 
+            st.session_state.start_time = start_time
+            st.session_state.duration = int(duration)
+
+            st.session_state.test_end_time = start_time + timedelta(seconds=int(duration))
+
+            # -------------------------
+            # QUESTIONS (IMPORTANT)
+            # -------------------------
+            saved_questions = saved_progress.get("questions", [])
+
+            if isinstance(saved_questions, str):
+                try:
+                    saved_questions = json.loads(saved_questions)
+                except:
+                    saved_questions = []
+
+            st.session_state.questions = saved_questions
+
+            # -------------------------
+            # CURRENT QUESTION (FIXED RESET ISSUE)
+            # -------------------------
+            saved_current_q = int(saved_progress.get("current_q") or 0)
+
+            # 🔥 ALWAYS restore (REMOVE resume flag logic)
+            st.session_state.current_q = saved_current_q
+
+            # -------------------------
+            # ANSWERS RESTORE
+            # -------------------------
+            saved_answers = saved_progress.get("answers", {})
+
+            if isinstance(saved_answers, str):
+                try:
+                    saved_answers = json.loads(saved_answers)
+                except:
+                    saved_answers = {}
+
+            if not isinstance(saved_answers, dict):
+                saved_answers = {}
+
+            st.session_state.answers = {
+                str(k): (v.get("selected") if isinstance(v, dict) else v)
+                for k, v in saved_answers.items()
+            }
+
+            # -------------------------
+            # FLAGS
+            # -------------------------
+            st.session_state.resumed = True
+            st.session_state.test_started = True
+            st.session_state.test_action = None
+
+            print("✅ RESUME COMPLETE")
+            print("current_q =", st.session_state.current_q)
 
             # -------------------------
             # ✅ SAFE RESTORE
@@ -681,9 +725,9 @@ def run_student_mode():
                 except:
                     saved_questions = []
 
-            # ✅ normalize questions
+
             # -------------------------
-            # Normalize questions (SAFE SINGLE FORMAT)
+            #   # ✅ normalize questions (SAFE SINGLE FORMAT)
             # -------------------------
             normalized_questions = [
                 normalize_question(q)
@@ -710,6 +754,8 @@ def run_student_mode():
                 "answers",
                 [""] * len(st.session_state.questions)
             )
+            st.write("saved_answers raw =", saved_answers)
+            st.write("saved_answers type =", type(saved_answers))
 
             # ✅ FIX: decode JSON/string answers safely
             if isinstance(saved_answers, str):
@@ -721,31 +767,72 @@ def run_student_mode():
                 except Exception:
                     saved_answers = [""] * len(st.session_state.questions)
 
-            # ✅ ensure answers is always a list
-            if not isinstance(saved_answers, list):
-                saved_answers = [""] * len(st.session_state.questions)
+            # -------------------------
+            # Restore answers
+            # -------------------------
 
-            st.session_state.answers = saved_answers
+            if isinstance(saved_answers, dict):
 
-            st.session_state.current_q = min(
-                max(saved_progress.get("current_q", 0), 0),
-                len(st.session_state.questions) - 1
-            )
+                st.session_state.answers = {
+                    str(k): v
+                    for k, v in saved_answers.items()
+                }
 
-            st.session_state.start_time = datetime.fromtimestamp(saved_start_time)
-            st.session_state.duration = int(saved_duration)
+            elif isinstance(saved_answers, list):
 
-            st.session_state.test_end_time = (
-                    st.session_state.start_time +
-                    timedelta(seconds=st.session_state.duration)
-            )
+                clean_answers = {}
 
-            st.session_state.auto_submitted = False
-            st.session_state.test_action = None
+                # old system: list of dicts
+                if (
+                        isinstance(saved_answers, list)
+                        and saved_answers
+                ):
+
+                    clean_answers = {}
+
+                    for item in saved_answers:
+
+                        if isinstance(item, dict):
+
+                            qid = item.get("question_id")
+
+                            if qid is not None:
+                                clean_answers[str(qid)] = item.get(
+                                    "selected",
+                                    ""
+                                )
+
+                # very old system: list of tuples/lists
+                else:
+
+                    for item in saved_answers:
+
+                        if (
+                                isinstance(item, (list, tuple))
+                                and len(item) >= 2
+                        ):
+                            clean_answers[str(item[0])] = item[1]
+
+                st.session_state.answers = clean_answers
+
+            else:
+
+                st.session_state.answers = {}
+
 
         # -------------------------
         # ⏱️ TIMER
         # -------------------------
+        st.write(st.session_state.start_time)
+        st.write(type(st.session_state.start_time))
+
+
+        if not isinstance(st.session_state.start_time, datetime):
+            st.error(
+                f"Invalid start_time: {st.session_state.start_time}"
+            )
+            st.stop()
+
         now_ts = datetime.now().timestamp()
         start_ts = st.session_state.start_time.timestamp()
 
@@ -754,8 +841,6 @@ def run_student_mode():
 
         mins = int(remaining // 60)
         secs = int(remaining % 60)
-
-
 
         # -------------------------
         # 🔴 AUTO SUBMIT (RUN FIRST)
@@ -768,43 +853,42 @@ def run_student_mode():
                 st.warning("⏰ Time is up! Submitting your test automatically...")
 
                 # -------------------------
-                # Build structured answers (IMPORTANT FIX)
+                # Build structured answers (SAFE VERSION)
                 # -------------------------
                 details = []
 
-                for q, ans in zip(st.session_state.questions, st.session_state.answers):
+                questions = st.session_state.questions
+                answers = st.session_state.get("answers", {})
+
+                if not isinstance(answers, dict):
+                    answers = {}
+
+                for q in questions:
+                    qid = str(q["id"])
+
+                    selected_answer = answers.get(qid, "")
                     correct_answer = q.get("correct_answer", "")
 
                     is_correct = (
-                            str(ans).strip().lower()
+                            str(selected_answer).strip().lower()
                             == str(correct_answer).strip().lower()
                     )
 
                     details.append({
-                        "question_id": q.get("id"),
+                        "question_id": q["id"],
                         "question_text": q.get("text", ""),
-                        "selected": ans or "—",
-                        "correct": correct_answer or "—",
+                        "selected": selected_answer,
+                        "correct": correct_answer,
                         "is_correct": is_correct
                     })
 
                 # -------------------------
-                # Save to DB (FIXED FORMAT)
+                # Save to DB (FINAL FIXED FORMAT)
                 # -------------------------
-                save_progress(
-                    access_code=access_code,
-                    subject_id=selected_subject_id,
-                    class_id=class_id_int,
-                    school_id=school_id_int,
-                    test_type=st.session_state.test_type,
-                    answers=json.dumps(details),
-                    current_q=st.session_state.current_q,
-                    start_time=st.session_state.start_time,
-                    duration=st.session_state.duration,
-                    questions=[q["id"] for q in st.session_state.questions],
-                    student_id=student_id,
-                    submitted=True
-                )
+                # mark submitted BEFORE save (important)
+                st.session_state.submitted = True
+
+                persist_progress()
 
                 st.success("✅ Test submitted automatically.")
 
@@ -813,14 +897,22 @@ def run_student_mode():
 
 
 
-
-
         # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
         import time
 
         t0 = time.time()
 
-        if st.session_state.get("test_started") and not st.session_state.get("test_end_time"):
+        st.write(
+            "AUTO INIT CHECK:",
+            st.session_state.get("test_started"),
+            st.session_state.get("test_end_time"),
+            st.session_state.get("current_q")
+        )
+        if (
+                st.session_state.get("test_started")
+                and not st.session_state.get("test_end_time")
+                and not st.session_state.get("resumed", False)
+        ):
             st.warning("AUTO INITIALIZE EXECUTED")
             duration_minutes = get_test_duration(
                 class_id=class_id,
@@ -834,15 +926,11 @@ def run_student_mode():
                 else subjective_questions
             )
 
-            st.session_state.answers = [
-                {
-                    "question_id": q["id"],
-                    "selected": "",
-                    "correct": "",
-                    "is_correct": False
+            if not st.session_state.get("resumed", False):
+                st.session_state.answers = {
+                    str(q["id"]): ""
+                    for q in st.session_state.questions
                 }
-                for q in st.session_state.questions
-            ]
 
             st.session_state.current_q = 0
             st.session_state.start_time = datetime.now()
@@ -908,18 +996,50 @@ def run_student_mode():
             unsafe_allow_html=True
         )
 
-        # =============================
-        # 📊 PROGRESS INFO (UI ONLY)
-        # =============================
+        answers = st.session_state.get("answers", {})
 
-        answered = sum(
-            1 for a in st.session_state.answers
-            if a not in (None, "", [])
-        )
+        # -------------------------
+        # FORCE DICT (CRITICAL FIX)
+        # -------------------------
+        if isinstance(answers, list):
+            answers = {
+                str(i): a
+                for i, a in enumerate(answers)
+            }
 
+        if not isinstance(answers, dict):
+            answers = {}
+
+        # 🔥 IMPORTANT: persist back to session state
+        st.session_state.answers = answers
+
+        # -------------------------
+        # Progress calculation
+        # -------------------------
         total_questions = len(st.session_state.questions)
 
-        percent = int((answered / total_questions) * 100) if total_questions else 0
+        answered = 0
+
+        for q in st.session_state.questions:
+
+            qid = str(q["id"])
+
+            ans = st.session_state.answers.get(qid, "")
+
+            # support dict answer format
+            if isinstance(ans, dict):
+                value = ans.get("selected", "")
+            else:
+                value = ans
+
+            if str(value).strip():
+                answered += 1
+
+        percent = (
+            round(answered * 100 / total_questions)
+            if total_questions > 0
+            else 0
+        )
 
         st.markdown(
             f"""
@@ -941,9 +1061,7 @@ def run_student_mode():
             unsafe_allow_html=True
         )
 
-        # -------------------------
-        # ⛔ Auto-submit when time is up
-        # -------------------------
+
         # ==============================
         # ⏰ AUTO SUBMIT (OPTIMIZED)
         # ==============================
@@ -960,7 +1078,11 @@ def run_student_mode():
                 else st.session_state.start_time
             )
 
-            subject_id = selected_subject["id"]
+            subject_id = selected_subject.get("id")
+            if subject_id is None:
+                st.error("Subject ID missing.")
+                st.stop()
+
 
             # ------------------------------
             # 1️⃣ Save final progress (single source of truth)
@@ -979,6 +1101,7 @@ def run_student_mode():
                 questions=[q["id"] for q in st.session_state.questions],
                 submitted=True
             )
+
 
             # ------------------------------
             # 2️⃣ Persist answers (FAST BULK UPDATE)
@@ -1013,10 +1136,9 @@ def run_student_mode():
                     # UPDATE IN MEMORY ONLY
                     # --------------------------
                     for i in range(len(questions)):
-
                         q = questions[i]
-                        ans = answers[i] if i < len(answers) else ""
 
+                        ans = answers.get(str(q["id"]), "")
                         qid = q["id"]
 
                         existing = existing_map.get(qid)
@@ -1060,11 +1182,19 @@ def run_student_mode():
             st.warning("🚨 Questions failed to load. Check upload or loader.")
             st.stop()
 
+        st.write("ANSWERS TYPE:", type(st.session_state.answers))
+        st.write("ANSWERS:", st.session_state.answers)
 
+        st.write("DEBUG OWNER:", st.session_state.get("_current_q_owner"))  # 👈 HERE
+        st.write(
+            "TRACKER ANSWERS TYPE:",
+            type(st.session_state.answers)
+        )
 
-        current_q_idx = min(max(current_q_idx, 0), len(questions) - 1)
-        st.session_state.current_q = current_q_idx
-
+        st.write(
+            "TRACKER ANSWERS:",
+            st.session_state.answers
+        )
         # ✅ SAFE NOW
         show_question_tracker(
             st.session_state.questions,
@@ -1072,6 +1202,10 @@ def run_student_mode():
             st.session_state.answers
         )
 
+        # -------------------------
+        # DEBUG
+        # -------------------------
+        st.write("CURRENT_Q INDEX:", st.session_state.current_q)
 
         q = questions[current_q_idx]
         question_text = q.get("text", "No question text")
@@ -1088,11 +1222,24 @@ def run_student_mode():
         # Answer input (OBJECTIVE vs SUBJECTIVE)
         # -------------------------
         question_type = field(q, "question_type", st.session_state.test_type)
-        # Ensure answers list is sized
-        while len(st.session_state.answers) <= current_q_idx:
-            st.session_state.answers.append("")
 
-        prev_answer = st.session_state.answers[current_q_idx]
+        # Ensure answer exists for this question (DICT-BASED)
+        question_id = str(q["id"])
+
+        if question_id not in st.session_state.answers:
+
+            question_id = str(q["id"])
+
+            if not isinstance(st.session_state.answers, dict):
+                st.session_state.answers = {}
+
+            if question_id not in st.session_state.answers:
+                st.session_state.answers[question_id] = ""
+
+        # Get previous answer safely
+        prev_answer = st.session_state.answers.get(question_id, "")
+
+
         # -------------------------
         # 🟦 OBJECTIVE QUESTION
         # -------------------------
@@ -1122,45 +1269,54 @@ def run_student_mode():
                 disabled=time_up or st.session_state.get("submitted", False)
             )
 
-            # Save only in session state
-            st.session_state.answers[current_q_idx] = (
+            st.session_state.answers[question_id] = (
                 ""
                 if selected_option == "Choose answer"
                 else selected_option
             )
+
         # -------------------------
         # 🟩 SUBJECTIVE QUESTION
         # -------------------------
         elif question_type == "subjective":
 
+            qid = str(q["id"])
+
+            st.write(
+                "SUBJECTIVE SAVE:",
+                qid,
+                st.session_state.answers.get(qid, "NOT FOUND")
+            )
+
             import streamlit.components.v1 as components
 
             # -------------------------
-            # Ensure answers exist
+            # Ensure answers exist (DICT)
             # -------------------------
             if "answers" not in st.session_state:
-                st.session_state.answers = [""] * len(questions)
+                st.session_state.answers = {}
 
-            while len(st.session_state.answers) <= current_q_idx:
-                st.session_state.answers.append("")
+            question_id = str(q["id"])
+
+            if question_id not in st.session_state.answers:
+                st.session_state.answers[question_id] = ""
 
             # -------------------------
             # Session keys
             # -------------------------
-            current_key = f"text_{current_q_idx}"
+            current_key = f"text_{question_id}"
 
             if current_key not in st.session_state:
 
-                val = st.session_state.answers[current_q_idx]
+                val = st.session_state.answers.get(question_id, "")
 
                 if val is None:
                     val = ""
-                elif isinstance(val, dict):
-                    val = val.get("answer", "")
                 else:
                     val = str(val)
 
                 st.session_state[current_key] = val
+
             # -------------------------
             # Disabled state
             # -------------------------
@@ -1170,6 +1326,7 @@ def run_student_mode():
                     or is_locked
             )
 
+            from streamlit_javascript import st_javascript
             # -------------------------
             # Initialize violation counter
             # -------------------------
@@ -1185,146 +1342,67 @@ def run_student_mode():
 
                 const doc = window.parent.document;
 
-                if (!window.violationListenersAdded){
+                if (!window.violationListenersAdded) {
 
-                    window.violationListenersAdded=true;
+                    window.violationListenersAdded = true;
 
-                    function reportViolation(type){
+                    function reportViolation(type) {
 
                         alert("⚠️ " + type + " detected!");
 
-                        const url=new URL(window.parent.location);
-
-                        url.searchParams.set(
-                            "violation",
-                            type
-                        );
-
-                        url.searchParams.set(
-                            "time",
-                            Date.now()
-                        );
-
-                        window.parent.location.href=url.toString();
+                        console.log("Violation:", type);
                     }
 
                     doc.addEventListener(
                         "copy",
-                        ()=>reportViolation("Copy")
+                        () => reportViolation("Copy")
                     );
 
                     doc.addEventListener(
                         "cut",
-                        ()=>reportViolation("Cut")
+                        () => reportViolation("Cut")
                     );
 
                     doc.addEventListener(
                         "paste",
-                        ()=>reportViolation("Paste")
+                        () => reportViolation("Paste")
                     );
-
                 }
-
                 </script>
                 """,
                 height=0
             )
-
-
-
-            # -------------------------
-            # Initialize counter
-            # -------------------------
-            query_params = st.query_params
-
-
-            # -------------------------
-            # Detect violation
-            # -------------------------
-            if "violation" in st.query_params:
-
-                try:
-
-                    violation_type = st.query_params.get("violation")
-
-                    # Streamlit may return list
-                    if isinstance(violation_type, list):
-                        violation_type = violation_type[0]
-
-                    violation_type = str(
-                        violation_type
-                    ).strip().lower()
-
-                    # -------------------------
-                    # Safe IDs
-                    # -------------------------
-                    progress_id = getattr(record, "id", None)
-
-                    question_id = None
-
-                    if isinstance(q, dict):
-                        question_id = q.get("id")
-
-                    # -------------------------
-                    # Save violation
-                    # -------------------------
-                    log_violation(
-                        progress_id=progress_id,
-                        student_id=student_id,
-                        subject_id=selected_subject.id,
-                        question_id=question_id,
-                        school_id=school_id_int,
-                        test_type="subjective",
-                        event_type=violation_type
-                    )
-
-                    # -------------------------
-                    # Increase counter
-                    # -------------------------
-                    st.session_state.copy_paste_count += 1
-
-                    st.warning(
-                        f"⚠️ {violation_type.upper()} detected "
-                        f"and logged."
-                    )
-
-                except Exception as e:
-
-                    st.error(
-                        f"Violation logging failed: {e}"
-                    )
-
-                finally:
-
-                    # Prevent duplicate triggers
-                    st.query_params.clear()
             # -------------------------
             # Text area
             # -------------------------
+            if st.button("TEST VIOLATION"):
+                log_violation(
+                    progress_id=record.get("id"),
+                    student_id=student_id,
+                    subject_id=selected_subject_id,
+                    question_id=q["id"],
+                    school_id=school_id_int,
+                    test_type="subjective",
+                    event_type="paste"
+                )
 
+                st.success("Violation logged")
 
-            current_answer = ""
+            # -------------------------
+            # Use question_id as single source of truth
+            # -------------------------
+            qid = str(q["id"])
 
-            if len(st.session_state.answers) > current_q_idx:
+            saved = st.session_state.answers.get(qid, {})
 
-                saved_answer = st.session_state.answers[current_q_idx]
+            if isinstance(saved, dict):
+                current_answer = saved.get("selected", "")
+            else:
+                current_answer = str(saved) if saved else ""
 
-                if isinstance(saved_answer, dict):
-
-                    current_answer = (
-                            saved_answer.get("answer")
-                            or saved_answer.get("selected")
-                            or ""
-                    )
-
-                elif saved_answer is None:
-
-                    current_answer = ""
-
-                else:
-
-                    current_answer = str(saved_answer)
-
+            # -------------------------
+            # Input field
+            # -------------------------
             answer = st.text_area(
                 "Type your answer:",
                 value=current_answer,
@@ -1333,22 +1411,17 @@ def run_student_mode():
                 disabled=time_up_or_submitted
             )
 
+            # -------------------------
+            # Save answer (ONLY dict model)
+            # -------------------------
             if not (is_submitted or is_locked):
+                st.session_state.answers[qid] = {
+                    "question_id": qid,
+                    "selected": answer,
+                    "correct": "",
+                    "is_correct": False
+                }
 
-                if (
-                        isinstance(st.session_state.answers[current_q_idx], dict)
-                ):
-
-                    st.session_state.answers[current_q_idx]["selected"] = answer
-
-                else:
-
-                    st.session_state.answers[current_q_idx] = {
-                        "question_id": q["id"],
-                        "selected": answer,
-                        "correct": "",
-                        "is_correct": False
-                    }
 
             # -------------------------
             # Sticky warning
@@ -1382,12 +1455,10 @@ def run_student_mode():
                     "Answers are now locked."
                 )
 
-
-            # -------------------------
-            # Navigation & Submit Buttons
-            # -------------------------
+        # -------------------------
+        # Navigation & Submit Buttons
+        # -------------------------
         col1, col2, col3 = st.columns([1, 1, 1])
-
 
         with col1:
 
@@ -1396,24 +1467,8 @@ def run_student_mode():
                     disabled=current_q_idx == 0,
                     key="prev_btn"
             ):
-                save_progress(
-                    access_code=access_code,
-                    student_id=student_id,
-                    subject_id=selected_subject["id"],
-                    class_id=class_id_int,
-                    school_id=school_id_int,
-                    test_type=st.session_state.test_type,
-                    answers=st.session_state.answers,
-                    current_q=current_q_idx,
-                    start_time=st.session_state.start_time,
-                    duration=st.session_state.duration,
-                    questions=[
-                        q["id"]
-                        for q in st.session_state.questions
-                    ]
-                )
-
                 st.session_state.current_q -= 1
+                persist_progress()
                 st.rerun()
 
         with col2:
@@ -1423,29 +1478,15 @@ def run_student_mode():
                     disabled=current_q_idx >= len(questions) - 1,
                     key="next_btn"
             ):
-                save_progress(
-                    access_code=access_code,
-                    student_id=student_id,
-                    subject_id=selected_subject["id"],
-                    class_id=class_id_int,
-                    school_id=school_id_int,
-                    test_type=st.session_state.test_type,
-                    answers=st.session_state.answers,
-                    current_q=current_q_idx,
-                    start_time=st.session_state.start_time,
-                    duration=st.session_state.duration,
-                    questions=[
-                        q["id"]
-                        for q in st.session_state.questions
-                    ]
-                )
-
                 st.session_state.current_q += 1
+                print("NEXT clicked")
+                print("session current_q =", st.session_state.current_q)
+                persist_progress()
                 st.rerun()
 
 
         with col3:
-          # -------------------------
+            # -------------------------
             # 1️⃣ User clicks submit
             # -------------------------
             if st.button(
@@ -1460,15 +1501,22 @@ def run_student_mode():
 
                     st.stop()
 
-                answers = st.session_state.get(
-                    "answers",
-                    []
-                )
+                answers = st.session_state.get("answers", {})
 
-                answered_count = sum(
-                    1 for a in answers
-                    if is_answered(a)
-                )
+                if not isinstance(answers, dict):
+                    answers = {}
+
+                answered_count = 0
+
+                for a in answers.values():
+
+                    if isinstance(a, dict):
+                        value = a.get("selected", "")
+                    else:
+                        value = a
+
+                    if str(value).strip():
+                        answered_count += 1
 
                 unanswered = (
                         len(questions)
@@ -1565,42 +1613,20 @@ def run_student_mode():
                         # -------------------------
                         subjective_payload = []
 
-                        for q, ans in zip(
-                                st.session_state.questions,
-                                st.session_state.answers
-                        ):
+                        answers = st.session_state.get("answers", {})
+                        if not isinstance(answers, dict):
+                            answers = {}
 
-                            # normalize safely
-                            if isinstance(ans, dict):
-
-                                clean_answer = (
-                                        ans.get("answer")
-                                        or ans.get("selected")
-                                        or ""
-                                )
-
-                            else:
-
-                                clean_answer = str(ans)
+                        for q in st.session_state.questions:
+                            qid = str(q["id"])
+                            raw = answers.get(qid, "")
+                            ans = raw.get("selected", "") if isinstance(raw, dict) else raw
 
                             subjective_payload.append({
-
-                                "question_id": q.get("id"),
-
-                                "question": (
-
-                                        q.get("question_text")
-
-                                        or q.get("text")
-
-                                        or "No Question"
-
-                                ),
-
-                                "answer": clean_answer
-
+                                "question_id": qid,
+                                "question": q.get("question_text") or q.get("text") or "No Question",
+                                "answer": ans
                             })
-
 
 
                         # -------------------------
@@ -1625,6 +1651,7 @@ def run_student_mode():
                             )
 
                             st.stop()
+
                         # -------------------------
                         # Update progress safely
                         # -------------------------
@@ -1643,27 +1670,35 @@ def run_student_mode():
                             ).first()
 
                             if progress:
+                                # Optional: save latest answers
+                                progress.answers = json.dumps(subjective_payload)
+
                                 progress.submitted = True
 
-                                # 🚨 DO NOT LOCK HERE
-                                # Admin grading needs updates later
+                                # Admin grading still needs access
                                 progress.locked = False
 
                                 progress.review_status = "pending"
+
                                 progress.reviewed_at = None
 
                             db.commit()
 
                         except Exception as e:
+
                             db.rollback()
+
                             st.error(f"❌ Failed updating progress: {e}")
 
                         finally:
+
                             db.close()
 
                         # -------------------------
                         # Consume retake
                         # -------------------------
+                        db = get_session()
+
                         try:
 
                             student_obj = db.query(Student).filter_by(
@@ -1680,7 +1715,12 @@ def run_student_mode():
                                 )
 
                         except Exception as e:
+
                             st.error(f"❌ Retake update failed: {e}")
+
+                        finally:
+
+                            db.close()
 
                         # -------------------------
                         # Prepare PDF state
@@ -1728,15 +1768,24 @@ def run_student_mode():
                         # -------------------------
                         # Grade answers
                         # -------------------------
+                        # -------------------------
+                        # Grade answers
+                        # -------------------------
+
+                        st.write("SUBMIT ANSWERS TYPE:", type(st.session_state.answers))
+                        st.write("SUBMIT ANSWERS:", st.session_state.answers)
+
                         correct_count = 0
                         details = []
 
-                        for q, ans in zip(
-                                st.session_state.questions,
-                                st.session_state.answers
-                        ):
+                        for q in st.session_state.questions:
 
-                            # FIX: extract answer if dict
+                            qid = str(q["id"])
+
+                            ans = st.session_state.answers.get(qid, "")
+
+                            selected_answer = ""
+
                             if isinstance(ans, dict):
                                 selected_answer = (
                                         ans.get("selected")
@@ -1744,35 +1793,42 @@ def run_student_mode():
                                         or ""
                                 )
                             else:
-                                selected_answer = str(ans)
+                                selected_answer = str(ans or "")
 
-                            correct_answer = q.get(
-                                "correct_answer",
-                                ""
+                            correct_answer = (
+                                    q.get("correct_answer")
+                                    or q.get("correct_answer_text")
+                                    or q.get("answer")
+                                    or ""
                             )
 
+                            # ALWAYS define is_correct
+                            selected_answer_clean = str(selected_answer).strip().lower()
+                            correct_answer_clean = str(correct_answer).strip().lower()
+
                             is_correct = (
-                                    selected_answer.strip().lower()
-                                    ==
-                                    str(correct_answer).strip().lower()
+                                    selected_answer_clean == correct_answer_clean
                             )
 
                             if is_correct:
                                 correct_count += 1
 
-
                             details.append({
-                                "question_id": q.get("id"),
-                                "question_text": q.get(
-                                    "text",
-                                    "No question text"
-                                ),
+                                "question_id": q["id"],
+                                "question_text": q.get("text", "No question text"),
                                 "selected": selected_answer or "—",
                                 "correct": correct_answer or "—",
                                 "is_correct": is_correct
                             })
 
 
+                        # 👇 PUT DEBUG HERE
+                        st.write("CORRECT COUNT:", correct_count)
+
+                        for item in details[:3]:
+                            st.write(item)
+
+                        # 👇 EXISTING CODE CONTINUES
                         total_questions = len(details)
 
                         percent = (
@@ -1826,17 +1882,18 @@ def run_student_mode():
                             progress.review_status = "reviewed"
                             progress.reviewed_at = datetime.utcnow()
 
+
                         # -------------------------
                         # Save Student Answers
                         # -------------------------
                         if progress:
 
-                            for q, ans in zip(
-                                    st.session_state.questions,
-                                    st.session_state.answers
-                            ):
+                            for q in st.session_state.questions:
 
-                                # FIX HERE
+                                qid = str(q["id"])
+
+                                ans = st.session_state.answers.get(qid, "")
+
                                 if isinstance(ans, dict):
 
                                     clean_answer = (
@@ -1869,6 +1926,7 @@ def run_student_mode():
                                             answer=clean_answer
                                         )
                                     )
+
 
                         # -------------------------
                         # Save Result

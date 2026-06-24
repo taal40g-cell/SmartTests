@@ -1441,22 +1441,51 @@ def show_question_tracker(questions, current_q, answers):
 
     with st.expander("🔽 Question Navigator", expanded=False):
 
+        # ✅ Build answer lookup once
+        if not isinstance(answers, dict):
+            answers = {}
+
+        answer_lookup = answers
+
+        # DEBUG
+        ids = [str(q["id"]) for q in questions]
+
+        duplicates = [
+            x
+            for x in ids
+            if ids.count(x) > 1
+        ]
+
+        st.write("QUESTION IDS:", ids)
+        st.write("DUPLICATES:", set(duplicates))
+
         for row_start in range(0, total, 10):
             cols = st.columns(10)
 
+            ...
             for i in range(row_start, min(row_start + 10, total)):
 
-                # ✅ SAFE ANSWER ACCESS
-                answer = answers[i] if i < len(answers) else None
+                question = questions[i]
+                qid = str(question["id"])
 
-                if i in marked:
-                    color = "#FFA500"      # marked
-                elif answer not in ["", None]:
-                    color = "#2ECC71"      # answered
+                if i == 0:
+                    st.write("TRACKER SAMPLE INDEX:", i)
+                    st.write("TRACKER SAMPLE QID:", qid)
+                    st.write("SESSION ANSWERS SAMPLE:", st.session_state.answers.get(qid, "MISSING"))
+
+                answer = st.session_state.answers.get(qid, "")
+
+                if qid in marked:
+                    color = "#FFA500"  # marked
+
+                elif str(answer).strip():
+                    color = "#2ECC71"  # answered
+
                 else:
-                    color = "#E74C3C"      # unanswered
+                    color = "#E74C3C"  # unanswered
 
-                btn_key = f"jump_{subject}_{student_id}_{test_id}_{i}"
+                qid = str(question["id"])
+                btn_key = f"jump_{student_id}_{qid}"
 
                 label_html = f"""
                     <div style="
@@ -2050,9 +2079,6 @@ def reset_test(student_id: int):
 
 
 
-# =====================================================
-#
-# =====================================================
 def save_progress(
         access_code,
         subject_id,
@@ -2066,113 +2092,141 @@ def save_progress(
         test_type,
         student_id=None,
         submitted=False,
-        locked=False      # ← ADD
+        locked=False
 ):
+
+    import json
+    from datetime import datetime
+    import inspect
 
     db = get_session()
 
+    # =========================
+    # DEBUG (safe)
+    # =========================
+    caller = inspect.stack()[1]
+    print(f"[SAVE_PROGRESS] called from {caller.filename}:{caller.lineno}")
+    print("current_q:", current_q)
+    print("answers type:", type(answers))
+    print("questions type:", type(questions))
+
     try:
 
-        def normalize_question(q):
-            if isinstance(q, (int, str)):
-                return q
-            return getattr(q, "id", q)
+        # =========================
+        # NORMALIZE QUESTIONS ONLY
+        # =========================
+        if isinstance(questions, str):
+            try:
+                questions = json.loads(questions)
+            except:
+                questions = []
 
-        question_list = [
-            normalize_question(q)
-            for q in questions
-        ]
+        if not isinstance(questions, list):
+            questions = []
 
+        question_list = []
+        for q in questions:
+            if isinstance(q, dict):
+                question_list.append(q.get("id"))
+            else:
+                question_list.append(q)
+
+        # =========================
+        # NORMALIZE ANSWERS ONLY
+        # =========================
+        if isinstance(answers, str):
+            try:
+                answers = json.loads(answers)
+            except:
+                answers = {}
+
+        if not isinstance(answers, dict):
+            answers = {}
+
+        # =========================
+        # TIME SAFE
+        # =========================
         if isinstance(start_time, datetime):
             safe_start_time = start_time.timestamp()
-
         elif isinstance(start_time, (int, float)):
             safe_start_time = float(start_time)
-
         else:
             safe_start_time = datetime.now().timestamp()
 
         safe_duration = int(duration) if duration else 0
 
-        existing = db.query(
-            StudentProgress
-        ).filter_by(
+        # =========================
+        # FIND EXISTING PROGRESS
+        # =========================
+        existing = db.query(StudentProgress).filter_by(
             student_id=student_id,
+            access_code=access_code,
             subject_id=subject_id,
             class_id=class_id,
             school_id=school_id,
             test_type=test_type
         ).one_or_none()
 
-        # =================================
-        # UPDATE EXISTING
-        # =================================
+        # =========================
+        # UPDATE
+        # =========================
         if existing:
 
-            existing.answers = answers
+            print("✅ Updating existing progress")
+
+            existing.answers = json.dumps(answers)
+            existing.questions = json.dumps(question_list)
             existing.current_q = current_q
             existing.start_time = safe_start_time
             existing.duration = safe_duration
-            existing.questions = question_list
 
-            # never downgrade
             if submitted:
                 existing.submitted = True
 
-            # NEW
             if locked:
                 existing.locked = True
 
             if submitted and test_type == "objective":
-
                 existing.review_status = "Auto Graded"
-
                 existing.reviewed_at = datetime.utcnow()
 
-        # =================================
+        # =========================
         # CREATE NEW
-        # =================================
+        # =========================
         else:
 
-            new_record = StudentProgress(
+            print("🆕 Creating new progress")
 
+            new_record = StudentProgress(
                 access_code=access_code,
                 student_id=student_id,
                 subject_id=subject_id,
                 class_id=class_id,
                 school_id=school_id,
                 test_type=test_type,
-                answers=answers,
+                answers=json.dumps(answers),
                 current_q=current_q,
                 start_time=safe_start_time,
                 duration=safe_duration,
-                questions=question_list,
-
+                questions=json.dumps(question_list),
                 submitted=bool(submitted),
-
-                locked=bool(locked)   # ← ADD
+                locked=bool(locked)
             )
 
             if submitted and test_type == "objective":
-
                 new_record.review_status = "Auto Graded"
-
                 new_record.reviewed_at = datetime.utcnow()
 
             db.add(new_record)
 
         db.commit()
+        print("✅ SAVE SUCCESS")
 
     except Exception as e:
-
         db.rollback()
-
-        print(
-            f"❌ Error saving progress: {e}"
-        )
+        print("❌ SAVE ERROR:", e)
 
     finally:
-
         db.close()
 
 
@@ -2198,21 +2252,23 @@ def load_progress(
         # -----------------------------------
         record = (
             db.query(
-                StudentProgress.answers,
-                StudentProgress.questions,
-                StudentProgress.current_q,
-                StudentProgress.start_time,
-                StudentProgress.duration,
-                StudentProgress.test_type,
-                StudentProgress.submitted,
-                StudentProgress.student_id,
+                StudentProgress.answers.label("answers"),
+                StudentProgress.questions.label("questions"),
+                StudentProgress.current_q.label("current_q"),
+                StudentProgress.start_time.label("start_time"),
+                StudentProgress.duration.label("duration"),
+                StudentProgress.test_type.label("test_type"),
+                StudentProgress.submitted.label("submitted"),
+                StudentProgress.student_id.label("student_id"),
             )
             .filter(
+                StudentProgress.student_id == student_id,
                 StudentProgress.access_code == access_code,
                 StudentProgress.subject_id == subject_id,
                 StudentProgress.school_id == school_id,
                 StudentProgress.test_type == test_type,
             )
+
             .filter(
                 StudentProgress.class_id == class_id
                 if class_id is not None
@@ -2224,51 +2280,76 @@ def load_progress(
         if not record:
             return None
 
+        record = dict(record._mapping)
+
         # -----------------------------------
         # ✅ SAFE JSON PARSING
         # -----------------------------------
-        try:
-            answers = (
-                json.loads(record.answers)
-                if record.answers
-                else []
-            )
+        raw_answers = record.get("answers")
 
-        except Exception:
-            answers = []
+        # -------------------------
+        # ANSWERS (SAFE LOAD)
+        # -------------------------
+        if raw_answers is None or raw_answers == "":
+            answers = {}
 
-        try:
-            questions = (
-                json.loads(record.questions)
-                if record.questions
-                else []
-            )
+        elif isinstance(raw_answers, list):
+            # old format already decoded
+            answers = {
+                str(a.get("question_id")): a
+                for a in raw_answers
+                if isinstance(a, dict) and a.get("question_id") is not None
+            }
 
-        except Exception:
+
+        elif isinstance(raw_answers, dict):
+            answers = raw_answers
+
+        else:
+            try:
+                answers = json.loads(raw_answers)
+
+                # handle JSON list after decode
+                if isinstance(answers, list):
+                    answers = {
+                        str(a.get("question_id")): a
+                        for a in answers
+                        if isinstance(a, dict)
+                    }
+
+            except Exception as e:
+                st.write("❌ answers load error:", e)
+                answers = {}
+
+        # -------------------------
+        # QUESTIONS (SAFE LOAD)
+        # -------------------------
+        raw_questions = record.get("questions")
+
+        if not raw_questions:
             questions = []
 
+        elif isinstance(raw_questions, list):
+            questions = raw_questions
+
+        else:
+            try:
+                questions = json.loads(raw_questions)
+            except Exception:
+                questions = []
         # -----------------------------------
         # ✅ RETURN CLEAN SERIALIZABLE DATA
         # -----------------------------------
         return {
-
             "answers": answers,
-
             "questions": questions,
-
-            "current_q": record.current_q or 0,
-
-            "start_time": record.start_time,
-
-            "duration": record.duration,
-
-            "test_type": record.test_type,
-
-            "submitted": bool(record.submitted),
-
-            "student_id": record.student_id,
+            "current_q": record.get("current_q", 0) or 0,
+            "start_time": record.get("start_time"),
+            "duration": record.get("duration"),
+            "test_type": record.get("test_type"),
+            "submitted": bool(record.get("submitted")),
+            "student_id": record.get("student_id"),
         }
-
     finally:
         db.close()
 
@@ -2929,15 +3010,7 @@ def parse_options(raw_options):
 
     return [clean_option(o) for o in opts]
 
-    # -------------------------
-    # Safe field getter
-    # -------------------------
 
-
-def field(obj, name, default=None):
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
 
 # =====================================================
 #

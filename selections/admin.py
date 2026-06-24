@@ -4561,6 +4561,9 @@ def run_admin_mode():
                     LIMIT :limit
                 """
 
+                # -------------------------
+                # Display
+                # -------------------------
                 logs = db.execute(
                     text(query),
                     {
@@ -4569,9 +4572,6 @@ def run_admin_mode():
                     }
                 ).fetchall()
 
-            # -------------------------
-            # Display
-            # -------------------------
             if logs:
 
                 df = pd.DataFrame(
@@ -4585,6 +4585,14 @@ def run_admin_mode():
                     ]
                 )
 
+                from datetime import timezone
+
+                df["Time"] = (
+                    pd.to_datetime(df["Time"], utc=True)
+                    .dt.tz_convert("Africa/Accra")
+                    .dt.strftime("%d %b %Y, %I:%M:%S %p")
+                )
+
                 st.dataframe(
                     df,
                     use_container_width=True
@@ -4596,6 +4604,7 @@ def run_admin_mode():
 
             else:
                 st.success("✅ No violations recorded.")
+
 
         except Exception as e:
 

@@ -91,6 +91,8 @@ def get_engine():
             pool_recycle=300,
             pool_size=5,
             max_overflow=2,
+            pool_timeout=30,
+            pool_reset_on_return="rollback",
             future=True,
         )
 
