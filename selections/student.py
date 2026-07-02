@@ -259,7 +259,7 @@ def run_student_mode():
     """, unsafe_allow_html=True)
 
     # =========================================================
-    # 📊 STUDENT MODE ENTRY POINT
+    # 👨‍🎓 STUDENT MODE ENTRY POINT
     # =========================================================
 
     # Show login page if needed
@@ -267,15 +267,6 @@ def run_student_mode():
 
     # Use session as source of truth
     student = st.session_state.get("student")
-
-    st.write("SESSION STUDENT:")
-    st.write(student)
-
-    st.write("SESSION ACCESS CODE:")
-    st.write(st.session_state.get("access_code"))
-
-    st.write("SESSION LOGGED IN:")
-    st.write(st.session_state.get("logged_in"))
 
     if not student:
         st.info("🚫 Student session not initialized.")
@@ -292,70 +283,59 @@ def run_student_mode():
     class_id_int = int(class_id)
 
     # =========================================================
-    # 📊 RESULTS CENTER (SAFE TO CALL NOW)
+    # 🚀 PRE-TEST SETUP
+    # Only execute before a test starts
     # =========================================================
-    import time
+    if not st.session_state.get("test_started", False):
 
-    t0 = time.time()
+        # -----------------------------------------------------
+        # 📊 Results Center
+        # -----------------------------------------------------
+        render_results_center()
 
-    render_results_center()
+        # -----------------------------------------------------
+        # 📦 Load Classes (Cached)
+        # -----------------------------------------------------
+        if "classes" not in st.session_state:
+            db = get_session()
 
-    st.write(
-        f"⏱ render_results_center: {time.time() - t0:.3f} sec"
-    )
+            try:
+                classes = db.query(Class).all()
+
+                st.session_state.classes = [
+                    {
+                        "id": c.id,
+                        "name": c.name
+                    }
+                    for c in classes
+                ]
+
+            finally:
+                db.close()
+
+        # -----------------------------------------------------
+        # 📚 Load Subjects (Cached)
+        # -----------------------------------------------------
+        if "subjects" not in st.session_state:
+            try:
+                st.session_state.subjects = load_subjects(
+                    school_id=school_id_int,
+                    class_id=class_id_int
+                )
+
+            except Exception as e:
+                st.error(f"Failed to load subjects: {e}")
+                st.session_state.subjects = []
+
     # =========================================================
-    # 📦 LOAD CLASSES (CACHE)
+    # 📚 SUBJECTS
     # =========================================================
-    if "classes" not in st.session_state:
-        db = get_session()
-
-        try:
-            classes = db.query(Class).all()
-
-            st.session_state.classes = [
-                {
-                    "id": c.id,
-                    "name": c.name
-                }
-                for c in classes
-            ]
-
-        finally:
-            db.close()
-    # =========================================================
-    # 📚 LOAD SUBJECTS (CACHE)
-    # =========================================================
-    import time
-
-    if "subjects" not in st.session_state:
-        try:
-            t0 = time.time()
-
-            st.session_state.subjects = load_subjects(
-                school_id=school_id_int,
-                class_id=class_id_int
-            )
-
-            st.write(
-                f"⏱ load_subjects: {time.time() - t0:.3f} sec"
-            )
-
-        except Exception as e:
-            st.error(f"Failed to load subjects: {e}")
-            st.session_state.subjects = []
-
-
-
     subjects = st.session_state.subjects
 
     if not subjects:
         st.info("🚫 No subjects available for your class. Contact admin.")
         st.stop()
 
-
-    # =========================================================
-    # 📘 SUBJECT SELECTION
-    # =========================================================
     # =========================================================
     # 📘 SUBJECT SELECTION
     # =========================================================
@@ -365,19 +345,17 @@ def run_student_mode():
         "Subject",
         subjects,
         format_func=lambda s: s["name"],
-        key="subject_select_box"
+        key="subject_select_box",
+        disabled=st.session_state.get("test_started", False)
     )
 
     selected_subject_id = selected_subject.get("id")
     selected_subject_name = selected_subject.get("name")
 
-    # ✅ IMPORTANT
+    # Store selected subject
     st.session_state.subject_id = selected_subject_id
 
-    st.write(
-        "SESSION subject_id:",
-        st.session_state.get("subject_id")
-    )
+
     # =========================================================
     # 🔄 SUBJECT SWITCH RESET
     # =========================================================
@@ -445,28 +423,15 @@ def run_student_mode():
 
     student_id = student_info["id"]
 
-    # -------------------------
-    # Create progress only once
-    # -------------------------
-    if "progress_record" not in st.session_state:
-        st.session_state.progress_record = (
-            get_or_create_student_progress(
-                student_id=student_id,
 
-                access_code=access_code,
-
-                subject_id=selected_subject_id,
-
-                class_id=class_id_int,
-
-                school_id=school_id_int,
-
-                test_type=st.session_state.test_type
-            )
-        )
-
-    record = st.session_state.progress_record
-
+    record = get_or_create_student_progress(
+        student_id=student_id,
+        access_code=access_code,
+        subject_id=selected_subject_id,
+        class_id=class_id_int,
+        school_id=school_id_int,
+        test_type=st.session_state.test_type
+    )
 
     is_locked = record.get("locked", False)
     is_submitted = record.get("submitted", False)
@@ -538,37 +503,20 @@ def run_student_mode():
                 else subjective_questions
             )
 
-            st.write(f"⏱ question_bank selection: {time.time() - t0:.3f} sec")
-
-            # ✅ FORCE REAL LIST
-            t0 = time.time()
-
             question_bank = list(question_bank)
             random.shuffle(question_bank)
 
-            st.write(f"⏱ shuffle: {time.time() - t0:.3f} sec")
-
-            # ✅ TRUE RANDOMIZATION
-            t0 = time.time()
-
-
-
-            st.write(f"⏱ shuffle: {time.time() - t0:.3f} sec")
 
 
             # -------------------------
             # Normalize questions
             # -------------------------
-            t0 = time.time()
-
             normalized_questions = [
                 normalize_question(q)
                 for q in question_bank
             ]
 
-            st.write(
-                f"⏱ normalize_questions: {time.time() - t0:.3f} sec"
-            )
+
 
             # ✅ SAVE RANDOMIZED ORDER
             st.session_state.questions = normalized_questions
@@ -603,16 +551,46 @@ def run_student_mode():
             st.session_state.locked = False
 
             # -------------------------
-            # Save progress
+            # Save progress (UPDATED FIXED VERSION)
             # -------------------------
             t0 = time.time()
 
-            persist_progress()
+            # 🔥 IMPORTANT: DO NOT rebuild/reset answers here
+            answers = st.session_state.get("answers", {})
+            if not isinstance(answers, dict):
+                answers = {}
 
-            st.write(f"⏱ save_progress: {time.time() - t0:.3f} sec")
+            save_progress(
+                access_code=access_code,
+                subject_id=selected_subject_id,
+                class_id=class_id_int,
+                school_id=school_id_int,
+                test_type=st.session_state.test_type,
+
+                answers=answers,
+
+                current_q=st.session_state.current_q,
+
+                start_time=st.session_state.start_time,
+
+                duration=st.session_state.duration,
+
+                questions=[
+                    q["id"]
+                    for q in normalized_questions
+                ],
+
+                student_id=student_id,
+
+                submitted=False
+            )
+
+
+
             st.session_state.test_action = None
 
             st.rerun()
+
 
         # -------------------------
         # 🟩 RESUME TEST
@@ -754,8 +732,7 @@ def run_student_mode():
                 "answers",
                 [""] * len(st.session_state.questions)
             )
-            st.write("saved_answers raw =", saved_answers)
-            st.write("saved_answers type =", type(saved_answers))
+
 
             # ✅ FIX: decode JSON/string answers safely
             if isinstance(saved_answers, str):
@@ -823,8 +800,7 @@ def run_student_mode():
         # -------------------------
         # ⏱️ TIMER
         # -------------------------
-        st.write(st.session_state.start_time)
-        st.write(type(st.session_state.start_time))
+
 
 
         if not isinstance(st.session_state.start_time, datetime):
@@ -898,16 +874,9 @@ def run_student_mode():
 
 
         # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
-        import time
 
-        t0 = time.time()
 
-        st.write(
-            "AUTO INIT CHECK:",
-            st.session_state.get("test_started"),
-            st.session_state.get("test_end_time"),
-            st.session_state.get("current_q")
-        )
+
         if (
                 st.session_state.get("test_started")
                 and not st.session_state.get("test_end_time")
@@ -944,9 +913,7 @@ def run_student_mode():
             st.session_state.marked_for_review = set()
             st.session_state.paste_count = 0
 
-        st.write(
-            f"⏱ auto_initialize: {time.time() - t0:.3f} sec"
-        )
+
 
 
         # =============================
@@ -1182,19 +1149,8 @@ def run_student_mode():
             st.warning("🚨 Questions failed to load. Check upload or loader.")
             st.stop()
 
-        st.write("ANSWERS TYPE:", type(st.session_state.answers))
-        st.write("ANSWERS:", st.session_state.answers)
 
-        st.write("DEBUG OWNER:", st.session_state.get("_current_q_owner"))  # 👈 HERE
-        st.write(
-            "TRACKER ANSWERS TYPE:",
-            type(st.session_state.answers)
-        )
 
-        st.write(
-            "TRACKER ANSWERS:",
-            st.session_state.answers
-        )
         # ✅ SAFE NOW
         show_question_tracker(
             st.session_state.questions,
@@ -1205,7 +1161,7 @@ def run_student_mode():
         # -------------------------
         # DEBUG
         # -------------------------
-        st.write("CURRENT_Q INDEX:", st.session_state.current_q)
+
 
         q = questions[current_q_idx]
         question_text = q.get("text", "No question text")
@@ -1282,11 +1238,7 @@ def run_student_mode():
 
             qid = str(q["id"])
 
-            st.write(
-                "SUBJECTIVE SAVE:",
-                qid,
-                st.session_state.answers.get(qid, "NOT FOUND")
-            )
+
 
             import streamlit.components.v1 as components
 
@@ -1772,8 +1724,7 @@ def run_student_mode():
                         # Grade answers
                         # -------------------------
 
-                        st.write("SUBMIT ANSWERS TYPE:", type(st.session_state.answers))
-                        st.write("SUBMIT ANSWERS:", st.session_state.answers)
+
 
                         correct_count = 0
                         details = []
@@ -1823,7 +1774,7 @@ def run_student_mode():
 
 
                         # 👇 PUT DEBUG HERE
-                        st.write("CORRECT COUNT:", correct_count)
+
 
                         for item in details[:3]:
                             st.write(item)
@@ -2114,3 +2065,8 @@ def run_student_mode():
 
                         mime="application/pdf"
                     )
+
+
+
+
+

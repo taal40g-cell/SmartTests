@@ -1381,21 +1381,51 @@ def render_test_entry_controls(
 
 
 def persist_progress():
+    import json
 
-    answers = st.session_state.get("answers") or {}
-    questions = st.session_state.get("questions") or []
+    # -------------------------
+    # Normalize session values
+    # -------------------------
+    answers = st.session_state.get("answers", {})
+    if not isinstance(answers, dict):
+        answers = {}
 
-    required = [
-        "access_code",
-        "student_id",
-        "subject_id",
-        "class_id",
-        "school_id",
-        "test_type",
+    questions = st.session_state.get("questions", [])
+    if not isinstance(questions, list):
+        questions = []
+
+    access_code = st.session_state.get("access_code")
+    student_id = st.session_state.get("student_id")
+    subject_id = st.session_state.get("subject_id")
+    class_id = st.session_state.get("class_id")
+    school_id = st.session_state.get("school_id")
+    test_type = st.session_state.get("test_type")
+    current_q = st.session_state.get("current_q", 0)
+    start_time = st.session_state.get("start_time")
+    duration = st.session_state.get("duration")
+
+    # -------------------------
+    # Required fields
+    # -------------------------
+    required_values = {
+        "access_code": access_code,
+        "student_id": student_id,
+        "subject_id": subject_id,
+        "class_id": class_id,
+        "school_id": school_id,
+        "test_type": test_type,
+    }
+
+    # only None / empty string should count as missing
+    missing = [
+        key for key, value in required_values.items()
+        if value is None or value == ""
     ]
 
-    missing = [k for k in required if not st.session_state.get(k)]
-
+    print("subject_id value =", repr(subject_id))
+    print("student_id value =", repr(student_id))
+    print("class_id value =", repr(class_id))
+    print("school_id value =", repr(school_id))
     print("persist_progress missing:", missing)
 
     if missing:
@@ -1403,67 +1433,59 @@ def persist_progress():
         return
 
     # -------------------------
+    # Normalize question ids
+    # -------------------------
+    question_ids = []
+
+    for q in questions:
+        if isinstance(q, dict):
+            qid = q.get("id")
+            if qid is not None:
+                question_ids.append(qid)
+        elif hasattr(q, "id"):
+            if q.id is not None:
+                question_ids.append(q.id)
+
+    # -------------------------
     # Prevent duplicate saves
     # -------------------------
-    import json
-
     state = (
-        st.session_state.get("current_q", 0),
-        json.dumps(answers, sort_keys=True)
+        student_id,
+        subject_id,
+        test_type,
+        current_q,
+        json.dumps(answers, sort_keys=True, default=str)
     )
-
 
     if st.session_state.get("_last_saved_state") == state:
         print("persist_progress SKIPPED")
         return
 
-    st.session_state["_last_saved_state"] = state
-
     print("========== PERSIST ==========")
+    print("access_code:", access_code)
+    print("student_id:", student_id)
+    print("current_q:", current_q)
 
-    print(
-        "access_code:",
-        st.session_state.get("access_code")
-    )
+    try:
+        save_progress(
+            access_code=access_code,
+            student_id=student_id,
+            subject_id=subject_id,
+            class_id=class_id,
+            school_id=school_id,
+            test_type=test_type,
+            answers=answers,
+            current_q=current_q,
+            start_time=start_time,
+            duration=duration,
+            questions=question_ids,
+            submitted=False,
+        )
 
-    print(
-        "student_id:",
-        st.session_state.get("student_id")
-    )
+        # only mark saved AFTER successful save
+        st.session_state["_last_saved_state"] = state
+        print("persist_progress DONE")
 
-    print(
-        "current_q:",
-        st.session_state.get("current_q")
-    )
-
-    save_progress(
-        access_code=st.session_state.get("access_code"),
-
-        student_id=st.session_state.get("student_id"),
-
-        subject_id=st.session_state.get("subject_id"),
-
-        class_id=st.session_state.get("class_id"),
-
-        school_id=st.session_state.get("school_id"),
-
-        test_type=st.session_state.get("test_type"),
-
-        answers=answers,
-
-        current_q=st.session_state.get("current_q", 0),
-
-        start_time=st.session_state.get("start_time"),
-
-        duration=st.session_state.get("duration"),
-
-        questions=[
-            q.get("id")
-            for q in questions
-            if isinstance(q, dict)
-        ],
-
-        submitted=False,
-    )
-
-
+    except Exception as e:
+        print(f"persist_progress ERROR: {e}")
+        raise
