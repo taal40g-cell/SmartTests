@@ -3580,8 +3580,14 @@ def run_admin_mode():
             st.warning("⚠️ No subjects found for this class.")
             st.stop()
 
-        subject_ids = [s.id for s in subjects]
-        subject_lookup = {s.id: s.name for s in subjects}
+        subject_ids = [s["id"] for s in subjects]
+
+        subject_lookup = {
+            s["id"]: s["name"]
+            for s in subjects
+        }
+
+
 
         if (
                 "dur_subject" not in st.session_state
