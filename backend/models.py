@@ -403,6 +403,7 @@ class StudentProgress(Base):
         ),
     )
 
+
     # -------------------------
     # Primary Key
     # -------------------------
@@ -430,17 +431,36 @@ class StudentProgress(Base):
 
     current_q = Column(Integer, default=0)
 
-    # ✅ FIXED (CRITICAL)
-    start_time = Column(Float, nullable=True)   # was NOT NULL ❌
-    duration = Column(Integer, nullable=True)    # was NOT NULL ❌
+    # -------------------------
+    # Test Timing
+    # -------------------------
+    start_time = Column(Float, nullable=True)
+    duration = Column(Integer, nullable=True)
 
     # -------------------------
     # Audit Fields
     # -------------------------
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    last_saved = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
 
-    submitted = Column(Boolean, default=False, nullable=False)
+    last_saved = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    submitted_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    submitted = Column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
 
     # -------------------------
     # Review / Grading Workflow
@@ -452,7 +472,6 @@ class StudentProgress(Base):
     review_comment = Column(Text, nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     reviewed_by = Column(String(100), nullable=True)
-
     # -------------------------
     # Relationships
     # -------------------------
@@ -460,6 +479,8 @@ class StudentProgress(Base):
     school = relationship("School", back_populates="progress")
     subject = relationship("Subject")
     class_ = relationship("Class")
+
+
 
  # ================================================
 # CONFIG

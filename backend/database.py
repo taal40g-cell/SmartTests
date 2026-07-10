@@ -42,26 +42,30 @@ def get_env():
 def resolve_database_url():
     env = get_env()
 
-    # ---------------- LOCAL ----------------
     if env == "local":
         return "sqlite:///smarttest.db"
 
-    # ---------------- PRODUCTION ----------------
     url = os.getenv("DATABASE_URL")
 
+    print("ENV =", env)
+    print("DATABASE_URL =", url)
+
     if not url:
-        raise RuntimeError("DATABASE_URL is missing in production environment")
+        raise RuntimeError("DATABASE_URL missing")
 
-    # Fix legacy postgres URL format
     if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+        url = url.replace(
+            "postgres://",
+            "postgresql+psycopg2://",
+            1,
+        )
 
-    # Ensure SSL for hosted DBs (Render, etc.)
     if "sslmode" not in url:
-        url += "&sslmode=require" if "?" in url else "?sslmode=require"
+        url += "?sslmode=require"
+
+    print("FINAL URL =", url)
 
     return url
-
 
 # ==============================
 # ENGINE (SINGLETON)

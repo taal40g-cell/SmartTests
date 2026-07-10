@@ -1,12 +1,12 @@
 import json
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta,timezone
 import streamlit as st
 from sqlalchemy.orm import joinedload
 # Backend modules
 from backend.models import Student
 from backend.database import get_session
-from backend.ui import  generate_pdf
+from backend.ui import  generate_pdf,reset_test_state
 from backend.helpers import (
     get_subjective_questions,
     get_objective_questions,
@@ -18,7 +18,7 @@ from backend.helpers import (
     handle_test_actions,
     get_duration_minutes,
     get_or_create_student_progress,
-    load_question_cache,
+    load_question_cache,finalize_submission,
     render_test_type_selector,persist_progress,
     render_test_entry_controls,persist_progress
 
@@ -72,6 +72,7 @@ def confirm_submit_dialog():
         if st.button("🚫 Go Back to Test", key="go_back_test"):
             st.session_state.confirm_submit = False
             st.rerun()
+
 
 
 # ==============================
@@ -355,7 +356,6 @@ def run_student_mode():
     # Store selected subject
     st.session_state.subject_id = selected_subject_id
 
-
     # =========================================================
     # 🔄 SUBJECT SWITCH RESET
     # =========================================================
@@ -363,52 +363,44 @@ def run_student_mode():
         st.session_state.subject = selected_subject_name
 
     elif st.session_state.subject != selected_subject_name:
-        reset_keys = [
-            "test_started", "submitted", "answers", "questions",
-            "current_q", "current_page", "marked_for_review",
-            "start_time", "test_end_time", "five_min_warned",
-            "saved_to_db", "last_auto_save",
-            "confirm_submit", "final_submit",
-            "answered_count", "unanswered"
-        ]
-
-        for key in reset_keys:
-            st.session_state[key] = (
-                set() if key == "marked_for_review"
-                else [] if key in ["answers", "questions"]
-                else False
-            )
-
+        reset_test_state()
         st.session_state.subject = selected_subject_name
         st.rerun()
-
 
     if selected_subject_id is None:
         st.info(f"🚫 Subject ID not found for '{selected_subject}'")
         st.stop()
 
-    # -------------------------
+    # ---------------------------------------------------------
     # ❓ LOAD QUESTIONS (CACHED)
-    # -------------------------
-    import time
-
-    objective_questions, subjective_questions = (
-        load_question_cache(
-            selected_subject_id=selected_subject_id,
-            class_id=class_id_int,
-            school_id=school_id_int
-        )
+    # ---------------------------------------------------------
+    objective_questions, subjective_questions = load_question_cache(
+        selected_subject_id=selected_subject_id,
+        class_id=class_id_int,
+        school_id=school_id_int
     )
 
-
-
-    # -------------------------
+    # ---------------------------------------------------------
     # 🧩 TEST TYPE SELECTION
-    # -------------------------
+    # ---------------------------------------------------------
     test_type = render_test_type_selector(
         class_id=class_id,
         subject_id=selected_subject_id
     )
+
+    # Keep session synchronized
+    st.session_state.test_type = test_type
+
+    # =========================================================
+    # 🔄 TEST TYPE SWITCH RESET
+    # =========================================================
+    if "last_test_type" not in st.session_state:
+        st.session_state.last_test_type = test_type
+
+    elif st.session_state.last_test_type != test_type:
+        reset_test_state()
+        st.session_state.last_test_type = test_type
+        st.rerun()
 
 
     # -------------------------
@@ -451,7 +443,7 @@ def run_student_mode():
     # -------------------------
     saved_progress = None
 
-    if not st.session_state.get("test_started", False):
+    if not st.session_state.test_started:
         saved_progress = render_test_entry_controls(
             access_code=access_code,
             subject_id=selected_subject_id,
@@ -463,6 +455,8 @@ def run_student_mode():
             is_locked=is_locked,
             retake_allowed=retake_allowed
         )
+
+
 
     # -------------------------
     # 🧠 UX LABELS
@@ -485,6 +479,8 @@ def run_student_mode():
             subject_id=selected_subject_id,
             school_id=school_id_int
         )
+
+
 
 # -----------------------------------
 # start test
@@ -1398,6 +1394,7 @@ def run_student_mode():
                 unsafe_allow_html=True
             )
 
+
             # -------------------------
             # Submitted state
             # -------------------------
@@ -1406,6 +1403,7 @@ def run_student_mode():
                     "✅ You have submitted this test. "
                     "Answers are now locked."
                 )
+
 
         # -------------------------
         # Navigation & Submit Buttons
@@ -1435,6 +1433,7 @@ def run_student_mode():
                 print("session current_q =", st.session_state.current_q)
                 persist_progress()
                 st.rerun()
+
 
 
         with col3:
@@ -1604,6 +1603,7 @@ def run_student_mode():
 
                             st.stop()
 
+
                         # -------------------------
                         # Update progress safely
                         # -------------------------
@@ -1622,19 +1622,14 @@ def run_student_mode():
                             ).first()
 
                             if progress:
-                                # Optional: save latest answers
-                                progress.answers = json.dumps(subjective_payload)
+                                finalize_submission(
+                                    db=db,
+                                    progress=progress,
+                                    answers=subjective_payload,
+                                    score=None,
+                                    test_type="subjective"
+                                )
 
-                                progress.submitted = True
-
-                                # Admin grading still needs access
-                                progress.locked = False
-
-                                progress.review_status = "pending"
-
-                                progress.reviewed_at = None
-
-                            db.commit()
 
                         except Exception as e:
 
@@ -1642,10 +1637,10 @@ def run_student_mode():
 
                             st.error(f"❌ Failed updating progress: {e}")
 
+
                         finally:
 
                             db.close()
-
                         # -------------------------
                         # Consume retake
                         # -------------------------
@@ -1720,11 +1715,6 @@ def run_student_mode():
                         # -------------------------
                         # Grade answers
                         # -------------------------
-                        # -------------------------
-                        # Grade answers
-                        # -------------------------
-
-
 
                         correct_count = 0
                         details = []
@@ -1788,6 +1778,7 @@ def run_student_mode():
                             else 0
                         )
 
+
                         # -------------------------
                         # Progress
                         # -------------------------
@@ -1804,34 +1795,24 @@ def run_student_mode():
                         ).first()
 
                         if progress:
-                            progress.answers = json.dumps(
-                                details
-                            )
+                            progress.current_q = st.session_state.current_q
 
-                            progress.current_q = (
-                                st.session_state.current_q
-                            )
+                            progress.start_time = start_time_ts
 
-                            progress.start_time = (
-                                start_time_ts
-                            )
+                            progress.duration = st.session_state.duration
 
-                            progress.duration = (
-                                st.session_state.duration
-                            )
+                            progress.questions = [
+                                q["id"]
+                                for q in st.session_state.questions
+                            ]
 
-                            progress.questions = json.dumps(
-                                [
-                                    q["id"]
-                                    for q in st.session_state.questions
-                                ]
+                            finalize_submission(
+                                db=db,
+                                progress=progress,
+                                answers=details,
+                                score=correct_count,
+                                test_type="objective"
                             )
-
-                            progress.score = correct_count
-                            progress.submitted = True
-                            progress.locked = True
-                            progress.review_status = "reviewed"
-                            progress.reviewed_at = datetime.utcnow()
 
 
                         # -------------------------

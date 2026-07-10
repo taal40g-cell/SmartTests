@@ -2,9 +2,7 @@ import streamlit as st
 import os
 import base64
 import json
-import pandas as pd
-import io
-import time
+import random
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -773,3 +771,132 @@ def parse_json_field(data):
     return []
 
 
+
+
+
+import random
+
+from datetime import datetime, timedelta
+
+import streamlit as st
+
+from backend.helpers import normalize_question
+from backend.db_helpers import save_progress
+
+def build_question_list(
+    test_type,
+    objective_questions,
+    subjective_questions
+):
+    question_bank = (
+        objective_questions
+        if test_type == "objective"
+        else subjective_questions
+    ).copy()
+
+    random.shuffle(question_bank)
+
+    normalized_questions = [
+        normalize_question(q)
+        for q in question_bank
+    ]
+
+    return normalized_questions
+
+
+
+
+
+def initialize_test_session(
+    questions,
+    duration_minutes
+):
+    st.session_state.questions = questions
+
+    st.session_state.test_started = True
+
+    st.session_state.current_q = 0
+
+    st.session_state.start_time = datetime.now()
+
+    st.session_state.duration = duration_minutes * 60
+
+    st.session_state.test_end_time = (
+        st.session_state.start_time +
+        timedelta(seconds=st.session_state.duration)
+    )
+
+    st.session_state.marked_for_review = set()
+
+    st.session_state.auto_submitted = False
+
+    st.session_state.submitted = False
+
+    st.session_state.locked = False
+
+
+
+
+
+
+def save_initial_progress(
+    access_code,
+    subject_id,
+    class_id,
+    school_id,
+    student_id,
+    questions,
+):
+    save_progress(
+        access_code=access_code,
+        subject_id=subject_id,
+        class_id=class_id,
+        school_id=school_id,
+        test_type=st.session_state.test_type,
+        answers=st.session_state.answers,
+        current_q=0,
+        start_time=st.session_state.start_time,
+        duration=st.session_state.duration,
+        questions=[q["id"] for q in questions],
+        student_id=student_id,
+        submitted=False
+    )
+
+
+
+
+# =========================================================
+# 🔄 RESET TEST STATE
+# =========================================================
+def reset_test_state():
+    reset_keys = [
+        "test_started",
+        "submitted",
+        "questions",
+        "answers",
+        "current_q",
+        "current_page",
+        "marked_for_review",
+        "start_time",
+        "test_end_time",
+        "duration",
+        "five_min_warned",
+        "saved_to_db",
+        "last_auto_save",
+        "confirm_submit",
+        "final_submit",
+        "answered_count",
+        "unanswered",
+        "resumed",
+        "test_action",
+    ]
+
+    for key in reset_keys:
+        if key == "marked_for_review":
+            st.session_state[key] = set()
+        elif key == "questions":
+            st.session_state[key] = []
+        elif key == "answers":
+            st.session_state[key] = {}
+        else:
+            st.session_state[key] = False

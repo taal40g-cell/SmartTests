@@ -178,12 +178,17 @@ def save_student_answers(access_code, subject, questions, answers):
                 school_id=school_id
             ).first()
 
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc)
+
             if not progress:
                 progress = StudentProgress(
                     student_id=student_id,
                     subject=subject,
                     school_id=school_id,
-                    submitted=True,      # Mark as submitted
+                    submitted=True,
+                    submitted_at=now,  # ✅ NEW
                     review_status="pending",
                     reviewed_at=None,
                     score=None,
@@ -191,9 +196,11 @@ def save_student_answers(access_code, subject, questions, answers):
                 )
                 db.add(progress)
                 db.flush()  # ensure progress.id is populated
+
             else:
                 # Update existing progress
                 progress.submitted = True
+                progress.submitted_at = now  # ✅ NEW
                 progress.locked = True
                 progress.review_status = "pending"
                 progress.reviewed_at = None
@@ -287,12 +294,20 @@ def handle_subjective_submission(
                     question_ids.append(int(q))
                 except:
                     pass
+
+        from datetime import datetime, timezone
+
         # ---------------------------------
         # Save answers
         # ---------------------------------
         progress.answers = list(answers)
         progress.questions = question_ids
+
+        # Student submission
         progress.submitted = True
+        progress.submitted_at = datetime.now(timezone.utc)
+
+        # Await teacher review
         progress.review_status = "pending"
         progress.reviewed_at = None
         progress.score = None
@@ -670,6 +685,8 @@ def render_results_center():
                 )
 
         st.markdown("---")
+
+
 
         # =====================================================
         # SUBJECTIVE TESTS
@@ -1344,6 +1361,25 @@ def get_duration_minutes(
 
 
 
+def prepare_test(
+    student,
+    school_id_int,
+    class_id_int,
+):
+    """
+    Handles all pre-test setup:
+    - Load classes
+    - Load subjects
+    - Subject selection
+    - Load question bank
+    - Test type selection
+    - Progress lookup
+    - Retake checks
+    - Start/Resume controls
+    """
+    ...
+
+
 
 
 def render_test_entry_controls(
@@ -1489,3 +1525,63 @@ def persist_progress():
     except Exception as e:
         print(f"persist_progress ERROR: {e}")
         raise
+
+
+
+
+
+
+from datetime import datetime, timezone
+import json
+def finalize_submission(
+        db,
+        progress,
+        answers=None,
+        score=None,
+        test_type="objective"
+):
+    """
+    Finalize student test submission.
+    Handles objective and subjective workflows.
+    """
+
+    now = datetime.now(timezone.utc)
+
+    # -------------------------
+    # Save answers
+    # -------------------------
+    if answers is not None:
+        progress.answers = answers
+
+    # -------------------------
+    # Submission status
+    # -------------------------
+    progress.submitted = True
+    progress.submitted_at = now
+
+    # -------------------------
+    # Scoring
+    # -------------------------
+    progress.score = score
+
+    # -------------------------
+    # Review workflow
+    # -------------------------
+    if test_type == "subjective":
+
+        # waiting for teacher
+        progress.review_status = "pending"
+        progress.reviewed_at = None
+        progress.locked = False
+
+    else:
+
+        # automatic marking
+        progress.review_status = "completed"
+        progress.reviewed_at = now
+        progress.locked = True
+
+    db.add(progress)
+    db.commit()
+
+    return progress

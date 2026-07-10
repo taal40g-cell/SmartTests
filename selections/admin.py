@@ -1825,17 +1825,19 @@ def run_admin_mode():
                 st.error(f"🚫 Upload failed: {e}")
                 st.stop()
 
+
             # =====================================================
             # 💾 SAVE TO DATABASE (RUNS ONLY IF VALIDATION PASSED)
             # =====================================================
             existing_questions_text = {
-                q["question"].lower()
+                q["question_text"].lower()
                 for q in get_objective_questions(
                     class_id=class_id,
                     subject_id=sub["id"],
                     school_id=school_id
                 )
             }
+
 
             duplicates = [
                 q["question"]
