@@ -697,7 +697,7 @@ def run_admin_mode():
             st.stop()
 
         # --------------------------------------------------
-        # FILTER
+        # FILTER + PRIORITIZE SEARCH MATCHES
         # --------------------------------------------------
 
         if search_q:
@@ -726,7 +726,17 @@ def run_admin_mode():
 
             )
 
-            df_filtered = df[mask].copy()
+            # Matching students
+            matched = df[mask].copy()
+
+            # Remaining students
+            remaining = df[~mask].copy()
+
+            # Put matches at the top
+            df_filtered = pd.concat(
+                [matched, remaining],
+                ignore_index=True
+            )
 
         else:
 
@@ -754,6 +764,11 @@ def run_admin_mode():
                 df_filtered.reset_index(drop=True),
                 use_container_width=True
             )
+
+            if search_q:
+                st.success(
+                    f"Showing matches for '{search_q}' at the top of the list."
+                )
 
             # --------------------------------------------------
             # EMPTY
