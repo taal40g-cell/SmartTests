@@ -425,8 +425,16 @@ def run_student_mode():
         test_type=st.session_state.test_type
     )
 
+    print("DATABASE RECORD")
+    print(record)
+    print("LOCKED:", record.get("locked"))
+    print("SUBMITTED:", record.get("submitted"))
+
+
     is_locked = record.get("locked", False)
     is_submitted = record.get("submitted", False)
+
+
 
     # -------------------------
     # 🔁 RETAKE LOGIC
@@ -796,9 +804,6 @@ def run_student_mode():
         # -------------------------
         # ⏱️ TIMER
         # -------------------------
-
-
-
         if not isinstance(st.session_state.start_time, datetime):
             st.error(
                 f"Invalid start_time: {st.session_state.start_time}"
@@ -815,64 +820,19 @@ def run_student_mode():
         secs = int(remaining % 60)
 
         # -------------------------
-        # 🔴 AUTO SUBMIT (RUN FIRST)
+        # 🔴 AUTO SUBMIT
         # -------------------------
         if remaining <= 0:
 
             if not st.session_state.get("auto_submitted", False):
-                st.session_state.auto_submitted = True
-
                 st.warning("⏰ Time is up! Submitting your test automatically...")
 
-                # -------------------------
-                # Build structured answers (SAFE VERSION)
-                # -------------------------
-                details = []
+                st.session_state.auto_submitted = True
+                st.session_state.final_submit = True
 
-                questions = st.session_state.questions
-                answers = st.session_state.get("answers", {})
-
-                if not isinstance(answers, dict):
-                    answers = {}
-
-                for q in questions:
-                    qid = str(q["id"])
-
-                    selected_answer = answers.get(qid, "")
-                    correct_answer = q.get("correct_answer", "")
-
-                    is_correct = (
-                            str(selected_answer).strip().lower()
-                            == str(correct_answer).strip().lower()
-                    )
-
-                    details.append({
-                        "question_id": q["id"],
-                        "question_text": q.get("text", ""),
-                        "selected": selected_answer,
-                        "correct": correct_answer,
-                        "is_correct": is_correct
-                    })
-
-                # -------------------------
-                # Save to DB (FINAL FIXED FORMAT)
-                # -------------------------
-                # mark submitted BEFORE save (important)
-                st.session_state.submitted = True
-
-                persist_progress()
-
-                st.success("✅ Test submitted automatically.")
-
-                st.session_state.test_started = False
-                st.stop()
-
-
+                st.rerun()
 
         # ✅ AUTO-INITIALIZE TEST (CRITICAL FIX)
-
-
-
         if (
                 st.session_state.get("test_started")
                 and not st.session_state.get("test_end_time")
@@ -1024,114 +984,6 @@ def run_student_mode():
             unsafe_allow_html=True
         )
 
-
-        # ==============================
-        # ⏰ AUTO SUBMIT (OPTIMIZED)
-        # ==============================
-        if remaining_seconds <= 0 and not is_submitted:
-
-            st.warning("⏰ Time is up! Submitting your test automatically...")
-
-            # ------------------------------
-            # Safe timestamp handling
-            # ------------------------------
-            start_time_ts = (
-                st.session_state.start_time.timestamp()
-                if isinstance(st.session_state.start_time, datetime)
-                else st.session_state.start_time
-            )
-
-            subject_id = selected_subject.get("id")
-            if subject_id is None:
-                st.error("Subject ID missing.")
-                st.stop()
-
-
-            # ------------------------------
-            # 1️⃣ Save final progress (single source of truth)
-            # ------------------------------
-            save_progress(
-                access_code=access_code,
-                student_id=student_id,
-                subject_id=subject_id,
-                class_id=class_id_int,
-                school_id=school_id_int,
-                test_type=st.session_state.test_type,
-                answers=st.session_state.answers,
-                current_q=st.session_state.current_q,
-                start_time=start_time_ts,
-                duration=st.session_state.duration,
-                questions=[q["id"] for q in st.session_state.questions],
-                submitted=True
-            )
-
-
-            # ------------------------------
-            # 2️⃣ Persist answers (FAST BULK UPDATE)
-            # ------------------------------
-            db = get_session()
-
-            try:
-                progress = db.query(StudentProgress).filter_by(
-                    student_id=student_id,
-                    subject_id=subject_id,
-                    class_id=class_id_int,
-                    school_id=school_id_int,
-                    test_type=st.session_state.test_type
-                ).first()
-
-                if progress:
-
-                    # --------------------------
-                    # BULK FETCH existing answers (NO LOOP QUERIES)
-                    # --------------------------
-                    existing_map = {
-                        a.question_id: a
-                        for a in db.query(StudentAnswer)
-                        .filter_by(progress_id=progress.id)
-                        .all()
-                    }
-
-                    questions = st.session_state.questions
-                    answers = st.session_state.answers
-
-                    # --------------------------
-                    # UPDATE IN MEMORY ONLY
-                    # --------------------------
-                    for i in range(len(questions)):
-                        q = questions[i]
-
-                        ans = answers.get(str(q["id"]), "")
-                        qid = q["id"]
-
-                        existing = existing_map.get(qid)
-
-                        if existing:
-                            existing.answer = ans
-                        else:
-                            db.add(
-                                StudentAnswer(
-                                    progress_id=progress.id,
-                                    question_id=qid,
-                                    answer=ans
-                                )
-                            )
-
-                    db.commit()
-
-            except Exception as e:
-                db.rollback()
-                print("Auto-submit error:", e)
-
-            finally:
-                db.close()
-
-            # ------------------------------
-            # 3️⃣ End session cleanly
-            # ------------------------------
-            st.success("✅ Test submitted automatically.")
-            st.session_state.test_started = False
-            st.stop()
 
 
         # -------------------------
