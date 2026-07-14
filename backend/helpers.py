@@ -52,10 +52,10 @@ def add_subjective_question(school_id, class_name, subject_id, question_text, ma
 # =====================================================
 #
 # =====================================================
+@st.cache_data(ttl=300)
 def get_subjective_questions(class_id, subject_id, school_id):
     """Return all subjective questions for a class + subject + school"""
 
-    from backend.database import get_session
     db = get_session()
 
     try:
@@ -66,16 +66,23 @@ def get_subjective_questions(class_id, subject_id, school_id):
                 SubjectiveQuestion.subject_id == subject_id,
                 SubjectiveQuestion.school_id == school_id
             )
+            .order_by(SubjectiveQuestion.id.asc())
             .all()
         )
 
-        return questions
+        return [
+            {
+                "id": q.id,
+                "text": q.question_text,
+                "question_text": q.question_text,
+                "model_answer": q.model_answer,
+                "question_type": "subjective",
+            }
+            for q in questions
+        ]
 
     finally:
         db.close()
-
-
-
 
 
 # =====================================================
@@ -353,9 +360,11 @@ def get_objective_questions(
         return [
             {
                 "id": q.id,
+                "text": q.question_text,
                 "question_text": q.question_text,
                 "options": q.options,
                 "correct_answer": q.correct_answer,
+                "question_type": "objective",
             }
             for q in questions
         ]

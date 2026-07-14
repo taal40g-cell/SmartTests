@@ -383,13 +383,30 @@ def run_student_mode():
     # ---------------------------------------------------------
     # 🧩 TEST TYPE SELECTION
     # ---------------------------------------------------------
-    test_type = render_test_type_selector(
+    # ---------------------------------------------------------
+    # 🧩 TEST TYPE SELECTION
+    # ---------------------------------------------------------
+
+    selected_test_type = render_test_type_selector(
         class_id=class_id,
         subject_id=selected_subject_id
     )
 
-    # Keep session synchronized
-    st.session_state.test_type = test_type
+    # ---------------------------------------------------------
+    # KEEP EXISTING TEST TYPE DURING ACTIVE TEST
+    # ---------------------------------------------------------
+
+    if (
+            "test_started" in st.session_state
+            and st.session_state.test_started
+            and "test_type" in st.session_state
+    ):
+        test_type = st.session_state.test_type
+
+    else:
+        test_type = selected_test_type
+        st.session_state.test_type = test_type
+
 
     # =========================================================
     # 🔄 TEST TYPE SWITCH RESET
@@ -415,7 +432,8 @@ def run_student_mode():
 
     student_id = student_info["id"]
 
-
+    print("CURRENT TEST TYPE:", st.session_state.test_type)
+    print(">>> LOADING STUDENT PROGRESS")
     record = get_or_create_student_progress(
         student_id=student_id,
         access_code=access_code,
@@ -425,12 +443,13 @@ def run_student_mode():
         test_type=st.session_state.test_type
     )
 
+
     print("DATABASE RECORD")
     print(record)
     print("LOCKED:", record.get("locked"))
     print("SUBMITTED:", record.get("submitted"))
 
-
+    print(">>> STUDENT PROGRESS LOADED")
     is_locked = record.get("locked", False)
     is_submitted = record.get("submitted", False)
 
@@ -649,7 +668,37 @@ def run_student_mode():
                 except:
                     saved_questions = []
 
-            st.session_state.questions = saved_questions
+            # Load the full question bank
+            question_bank = (
+                objective_questions
+                if st.session_state.test_type == "objective"
+                else subjective_questions
+            )
+
+            # Normalize every question
+            normalized_questions = [
+                normalize_question(q)
+                for q in question_bank
+            ]
+
+            # Build lookup table
+            question_map = {
+                q["id"]: q
+                for q in normalized_questions
+            }
+
+            # Rebuild full question objects
+            rebuilt_questions = [
+                question_map[qid]
+                for qid in saved_questions
+                if qid in question_map
+            ]
+
+            # Fallback if something went wrong
+            if rebuilt_questions:
+                st.session_state.questions = rebuilt_questions
+            else:
+                st.session_state.questions = normalized_questions
 
             # -------------------------
             # CURRENT QUESTION (FIXED RESET ISSUE)
@@ -685,120 +734,6 @@ def run_student_mode():
             st.session_state.test_started = True
             st.session_state.test_action = None
 
-            print("✅ RESUME COMPLETE")
-            print("current_q =", st.session_state.current_q)
-
-            # -------------------------
-            # ✅ SAFE RESTORE
-            # -------------------------
-
-            question_bank = (
-                objective_questions
-                if st.session_state.test_type == "objective"
-                else subjective_questions
-            )
-
-            saved_questions = saved_progress.get("questions", [])
-
-            if isinstance(saved_questions, str):
-
-                try:
-                    saved_questions = json.loads(saved_questions)
-                except:
-                    saved_questions = []
-
-
-            # -------------------------
-            #   # ✅ normalize questions (SAFE SINGLE FORMAT)
-            # -------------------------
-            normalized_questions = [
-                normalize_question(q)
-                for q in question_bank
-            ]
-
-            if saved_questions:
-
-                qmap = {q["id"]: q for q in normalized_questions}
-
-                rebuilt = [
-                    qmap[qid]
-                    for qid in saved_questions
-                    if qid in qmap
-                ]
-
-                st.session_state.questions = (
-                    rebuilt if rebuilt else normalized_questions
-                )
-
-            else:
-                st.session_state.questions = normalized_questions
-            saved_answers = saved_progress.get(
-                "answers",
-                [""] * len(st.session_state.questions)
-            )
-
-
-            # ✅ FIX: decode JSON/string answers safely
-            if isinstance(saved_answers, str):
-
-                try:
-
-                    saved_answers = json.loads(saved_answers)
-
-                except Exception:
-                    saved_answers = [""] * len(st.session_state.questions)
-
-            # -------------------------
-            # Restore answers
-            # -------------------------
-
-            if isinstance(saved_answers, dict):
-
-                st.session_state.answers = {
-                    str(k): v
-                    for k, v in saved_answers.items()
-                }
-
-            elif isinstance(saved_answers, list):
-
-                clean_answers = {}
-
-                # old system: list of dicts
-                if (
-                        isinstance(saved_answers, list)
-                        and saved_answers
-                ):
-
-                    clean_answers = {}
-
-                    for item in saved_answers:
-
-                        if isinstance(item, dict):
-
-                            qid = item.get("question_id")
-
-                            if qid is not None:
-                                clean_answers[str(qid)] = item.get(
-                                    "selected",
-                                    ""
-                                )
-
-                # very old system: list of tuples/lists
-                else:
-
-                    for item in saved_answers:
-
-                        if (
-                                isinstance(item, (list, tuple))
-                                and len(item) >= 2
-                        ):
-                            clean_answers[str(item[0])] = item[1]
-
-                st.session_state.answers = clean_answers
-
-            else:
-
-                st.session_state.answers = {}
 
 
         # -------------------------
