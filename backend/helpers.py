@@ -75,7 +75,7 @@ def get_subjective_questions(class_id, subject_id, school_id):
                 "id": q.id,
                 "text": q.question_text,
                 "question_text": q.question_text,
-                "model_answer": q.model_answer,
+                "marks": q.marks,
                 "question_type": "subjective",
             }
             for q in questions
