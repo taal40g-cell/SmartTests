@@ -13,10 +13,10 @@ from backend.models import(
 )
 
 from backend.db_helpers import (
-    save_progress,get_student_by_access_code,
-    calculate_score_db,StudentProgress,Student,
-    normalize_objective,parse_json_field,
-    normalize_subjective,load_progress
+    save_progress, get_student_by_access_code,
+    calculate_score_db, StudentProgress, Student,
+    normalize_objective, parse_json_field,
+    normalize_subjective, load_progress, load_subjects
 )
 
 from sqlalchemy.orm import joinedload
@@ -1594,3 +1594,48 @@ def finalize_submission(
     db.commit()
 
     return progress
+
+
+
+def render_pre_test_screen(
+    school_id_int,
+    class_id_int,
+):
+    # -----------------------------------------------------
+    # 📊 Results Center
+    # -----------------------------------------------------
+    render_results_center()
+
+    # -----------------------------------------------------
+    # 📦 Load Classes (Cached)
+    # -----------------------------------------------------
+    if "classes" not in st.session_state:
+        db = get_session()
+
+        try:
+            classes = db.query(Class).all()
+
+            st.session_state.classes = [
+                {
+                    "id": c.id,
+                    "name": c.name
+                }
+                for c in classes
+            ]
+
+        finally:
+            db.close()
+
+    # -----------------------------------------------------
+    # 📚 Load Subjects (Cached)
+    # -----------------------------------------------------
+    if "subjects" not in st.session_state:
+        try:
+            st.session_state.subjects = load_subjects(
+                school_id=school_id_int,
+                class_id=class_id_int
+            )
+
+        except Exception as e:
+            st.error(f"Failed to load subjects: {e}")
+            st.session_state.subjects = []
