@@ -2300,7 +2300,6 @@ def run_admin_mode():
                     )
                 }
 
-                st.write("Existing subjective questions:", len(existing_subj_text))
 
                 duplicates = [
 
@@ -3171,10 +3170,8 @@ def run_admin_mode():
                     unsafe_allow_html=True
                 )
 
-            st.write(
-                "Questions Found:",
-                total_questions
-            )
+
+
             if not questions:
                 st.info("No questions found for this selection.")
                 st.stop()
@@ -4306,8 +4303,6 @@ def run_admin_mode():
                 }
                 for s in subs
             ]) if subs else pd.DataFrame()
-
-            st.write(f"📝 Submissions: {len(submissions_df)} records")
 
             # ====================================================
             # 📊 RESULT TABLE (SAFE)

@@ -1456,22 +1456,14 @@ def show_question_tracker(questions, current_q, answers):
             if ids.count(x) > 1
         ]
 
-        st.write("QUESTION IDS:", ids)
-        st.write("DUPLICATES:", set(duplicates))
-
         for row_start in range(0, total, 10):
             cols = st.columns(10)
-
             ...
             for i in range(row_start, min(row_start + 10, total)):
 
                 question = questions[i]
                 qid = str(question["id"])
 
-                if i == 0:
-                    st.write("TRACKER SAMPLE INDEX:", i)
-                    st.write("TRACKER SAMPLE QID:", qid)
-                    st.write("SESSION ANSWERS SAMPLE:", st.session_state.answers.get(qid, "MISSING"))
 
                 answer = st.session_state.answers.get(qid, "")
 
@@ -2104,11 +2096,6 @@ def save_progress(
     # =========================
     # DEBUG (safe)
     # =========================
-    caller = inspect.stack()[1]
-    print(f"[SAVE_PROGRESS] called from {caller.filename}:{caller.lineno}")
-    print("current_q:", current_q)
-    print("answers type:", type(answers))
-    print("questions type:", type(questions))
 
     try:
 
@@ -2172,7 +2159,7 @@ def save_progress(
         # =========================
         if existing:
 
-            print("✅ Updating existing progress")
+
 
             existing.answers = json.dumps(answers)
             existing.questions = json.dumps(question_list)
@@ -2195,7 +2182,7 @@ def save_progress(
         # =========================
         else:
 
-            print("🆕 Creating new progress")
+
 
             new_record = StudentProgress(
                 access_code=access_code,
@@ -2220,11 +2207,9 @@ def save_progress(
             db.add(new_record)
 
         db.commit()
-        print("✅ SAVE SUCCESS")
 
     except Exception as e:
         db.rollback()
-        print("❌ SAVE ERROR:", e)
 
     finally:
         db.close()
@@ -2233,22 +2218,21 @@ def save_progress(
     # =====================================================
     #
     # =====================================================
-@st.cache_data(ttl=10, show_spinner=False)
 def load_progress(
     access_code: str,
     subject_id: int,
     school_id: int | None,
     test_type: str,
     class_id: int | None = None,
-    student_id: int | None = None
+    student_id: int | None = None,
 ):
-
     db = get_session()
+    import inspect
+
 
     try:
-
         # -----------------------------------
-        # ⚡ Select ONLY needed columns
+        # Load only required columns
         # -----------------------------------
         record = (
             db.query(
@@ -2268,7 +2252,6 @@ def load_progress(
                 StudentProgress.school_id == school_id,
                 StudentProgress.test_type == test_type,
             )
-
             .filter(
                 StudentProgress.class_id == class_id
                 if class_id is not None
@@ -2277,68 +2260,84 @@ def load_progress(
             .first()
         )
 
-        if not record:
+        if record is None:
             return None
 
-        record = dict(record._mapping)
+        record = {
+            "answers": record.answers,
+            "questions": record.questions,
+            "current_q": record.current_q,
+            "start_time": record.start_time,
+            "duration": record.duration,
+            "test_type": record.test_type,
+            "submitted": record.submitted,
+            "student_id": record.student_id,
+        }
 
         # -----------------------------------
-        # ✅ SAFE JSON PARSING
+        # ANSWERS
         # -----------------------------------
         raw_answers = record.get("answers")
 
-        # -------------------------
-        # ANSWERS (SAFE LOAD)
-        # -------------------------
         if raw_answers is None or raw_answers == "":
             answers = {}
 
+        elif isinstance(raw_answers, dict):
+            answers = raw_answers
+
         elif isinstance(raw_answers, list):
-            # old format already decoded
             answers = {
                 str(a.get("question_id")): a
                 for a in raw_answers
                 if isinstance(a, dict) and a.get("question_id") is not None
             }
 
-
-        elif isinstance(raw_answers, dict):
-            answers = raw_answers
-
-        else:
+        elif isinstance(raw_answers, str):
             try:
                 answers = json.loads(raw_answers)
 
-                # handle JSON list after decode
                 if isinstance(answers, list):
                     answers = {
                         str(a.get("question_id")): a
                         for a in answers
-                        if isinstance(a, dict)
+                        if isinstance(a, dict) and a.get("question_id") is not None
                     }
 
-            except Exception as e:
-                st.write("❌ answers load error:", e)
+                elif not isinstance(answers, dict):
+                    answers = {}
+
+            except json.JSONDecodeError:
                 answers = {}
 
-        # -------------------------
-        # QUESTIONS (SAFE LOAD)
-        # -------------------------
+        else:
+            answers = {}
+
+        # -----------------------------------
+        # QUESTIONS
+        # -----------------------------------
         raw_questions = record.get("questions")
 
-        if not raw_questions:
+        if raw_questions is None or raw_questions == "":
             questions = []
 
         elif isinstance(raw_questions, list):
             questions = raw_questions
 
-        else:
+        elif isinstance(raw_questions, str):
             try:
                 questions = json.loads(raw_questions)
-            except Exception:
+
+                if not isinstance(questions, list):
+                    questions = []
+
+            except json.JSONDecodeError:
                 questions = []
+
+        else:
+            questions = []
+
         # -----------------------------------
-        # ✅ RETURN CLEAN SERIALIZABLE DATA
+        # Return clean data
         # -----------------------------------
         return {
             "answers": answers,
@@ -2350,10 +2349,9 @@ def load_progress(
             "submitted": bool(record.get("submitted")),
             "student_id": record.get("student_id"),
         }
+
     finally:
         db.close()
-
-
 
 
 # ==============================

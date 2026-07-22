@@ -1,5 +1,4 @@
 import json
-import time
 import random
 from datetime import datetime, timedelta,timezone
 import streamlit as st
@@ -7,13 +6,11 @@ from sqlalchemy.orm import joinedload
 # Backend modules
 from backend.models import Student
 from backend.database import get_session
-from backend.ui import generate_pdf, reset_test_state, initialize_student_session, render_student_header, \
-    load_student_css, render_subject_selection
-
+from backend.ui import  generate_pdf,reset_test_state
 from backend.helpers import (
     get_subjective_questions,
     get_objective_questions,
-    save_answer, normalize_question,
+    save_answer,normalize_question,
     handle_subjective_submission,
     render_student_login,
     render_results_center,
@@ -21,9 +18,9 @@ from backend.helpers import (
     handle_test_actions,
     get_duration_minutes,
     get_or_create_student_progress,
-    load_question_cache, finalize_submission,
-    render_test_type_selector, persist_progress,
-    render_test_entry_controls, persist_progress, render_pre_test_screen
+    load_question_cache,finalize_submission,
+    render_test_type_selector,persist_progress,
+    render_test_entry_controls,persist_progress
 
 )
 from backend.db_helpers import (
@@ -76,10 +73,17 @@ def confirm_submit_dialog():
             st.session_state.confirm_submit = False
             st.rerun()
 
+
+
 # ==============================
 # Main Student Mode
 # ==============================
 def run_student_mode():
+
+
+    import time
+
+    page_start = time.time()
 
     @st.cache_data(ttl=300)
     def cached_users():
@@ -138,12 +142,122 @@ def run_student_mode():
         st.stop()
 
 
+    # -----------------------------
+    # Initialize session defaults
+    # -----------------------------
+    defaults = {
+        "test_started": False,
+        "submitted": False,
+        "logged_in": False,
+        "student": {},
+        "answers": {},  # dict keyed by question_id
+        "current_q": 0,
+        "current_page": 0,
+        "questions": [],
+        "subject": None,
+        "marked_for_review": set(),  # IMPORTANT FIX (not list)
+        "duration": None,
+        "start_time": None,
+        "test_end_time": None,
+        "five_min_warned": False,
+        "saved_to_db": False,
+        "last_auto_save": 0
+    }
 
-    initialize_student_session()
+    for key, val in defaults.items():
+        st.session_state.setdefault(key, val)
 
-    render_student_header()
+    # -------------------------
+    # Session state defaults
+    # -------------------------
 
-    load_student_css()
+    st.session_state.setdefault("confirm_submit", False)
+    st.session_state.setdefault("final_submit", False)
+    st.session_state.setdefault("answered_count", 0)
+    st.session_state.setdefault("unanswered", 0)
+
+    # -------------------------
+    # Navigation core state (MISSING PIECE)
+    # -------------------------
+    st.session_state.setdefault("current_q", 0)
+    st.session_state.setdefault("answers", {})
+    st.session_state.setdefault("questions", [])
+
+    # -------------------------
+    # Identity (IMPORTANT for persist_progress)
+    # -------------------------
+    st.session_state.setdefault("access_code", None)
+    st.session_state.setdefault("student_id", None)
+    st.session_state.setdefault("subject_id", None)
+    st.session_state.setdefault("class_id", None)
+    st.session_state.setdefault("school_id", None)
+
+
+    # -----------------------------
+    # Student Hub Header
+    # -----------------------------
+    st.markdown("""
+    <div style="font-size:28px;font-weight:700;color:#1f2937;">
+    🎓 Student Hub
+    </div>
+    <div style="
+        width:180px;
+        height:4px;
+        background:#4CAF50;
+        border-radius:4px;
+        margin-top:4px;
+        margin-bottom:20px;
+    "></div>
+    """, unsafe_allow_html=True)
+
+    # -----------------------------
+    # Header & Banner
+    # -----------------------------
+    st.markdown("""
+    <div style="
+        position: sticky;
+        top: 0;
+        background-color: #fff8ee;
+        color: #6b4f00;
+        padding: 10px;
+        font-weight: 600;
+        text-align: center;
+        z-index: 999;
+        border-radius: 8px;
+        border-left: 4px solid #d4a017;
+        margin-bottom:15px;
+    ">
+    📌 Retakes are controlled by Admins. Submit your test before time runs out.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # -----------------------------
+    # CSS Styling
+    # -----------------------------
+    st.markdown("""
+    <style>
+    .small-input input, .small-input select {
+        width: 150px !important;
+        padding: 6px;
+        font-size: 14px;
+    }
+
+    div[data-baseweb="input"],
+    div[data-baseweb="select"] {
+        width: 220px !important;
+        margin-left: 0 !important;
+    }
+
+    .card {
+        padding: 1rem;
+        margin-top: 0.8rem;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        background-color: #fafafa;
+        box-shadow: 1px 1px 4px rgba(0,0,0,0.08);
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     # =========================================================
     # 👨‍🎓 STUDENT MODE ENTRY POINT
@@ -174,26 +288,126 @@ def run_student_mode():
     # Only execute before a test starts
     # =========================================================
     if not st.session_state.get("test_started", False):
-        render_pre_test_screen(
-            school_id_int,
-            class_id_int,
-        )
 
+        # -----------------------------------------------------
+        # 📊 Results Center
+        # -----------------------------------------------------
+        render_results_center()
+
+        # -----------------------------------------------------
+        # 📦 Load Classes (Cached)
+        # -----------------------------------------------------
+        if "classes" not in st.session_state:
+            db = get_session()
+
+            try:
+                classes = db.query(Class).all()
+
+                st.session_state.classes = [
+                    {
+                        "id": c.id,
+                        "name": c.name
+                    }
+                    for c in classes
+                ]
+
+            finally:
+                db.close()
+
+        # -----------------------------------------------------
+        # 📚 Load Subjects (Cached)
+        # -----------------------------------------------------
+        if "subjects" not in st.session_state:
+            try:
+                st.session_state.subjects = load_subjects(
+                    school_id=school_id_int,
+                    class_id=class_id_int
+                )
+
+            except Exception as e:
+                st.error(f"Failed to load subjects: {e}")
+                st.session_state.subjects = []
 
     # =========================================================
     # 📚 SUBJECTS
     # =========================================================
-    (
-        selected_subject_id,
-        selected_subject_name,
-        objective_questions,
-        subjective_questions,
-        test_type,
-    ) = render_subject_selection(
-        school_id_int=school_id_int,
-        class_id_int=class_id_int,
-        class_id=class_id,
+    subjects = st.session_state.subjects
+
+    if not subjects:
+        st.info("🚫 No subjects available for your class. Contact admin.")
+        st.stop()
+
+    # =========================================================
+    # 📘 SUBJECT SELECTION
+    # =========================================================
+    st.markdown("#### 📘 Select Subject")
+
+    selected_subject = st.selectbox(
+        "Subject",
+        subjects,
+        format_func=lambda s: s["name"],
+        key="subject_select_box",
+        disabled=st.session_state.get("test_started", False)
     )
+
+    selected_subject_id = selected_subject.get("id")
+    selected_subject_name = selected_subject.get("name")
+
+    # Store selected subject
+    st.session_state.subject_id = selected_subject_id
+
+    # =========================================================
+    # 🔄 SUBJECT SWITCH RESET
+    # =========================================================
+    if st.session_state.subject is None:
+        st.session_state.subject = selected_subject_name
+
+    elif st.session_state.subject != selected_subject_name:
+        reset_test_state()
+        st.session_state.subject = selected_subject_name
+        st.rerun()
+
+    if selected_subject_id is None:
+        st.info(f"🚫 Subject ID not found for '{selected_subject}'")
+        st.stop()
+
+    # ---------------------------------------------------------
+    # ❓ LOAD QUESTIONS (CACHED)
+    # ---------------------------------------------------------
+    objective_questions, subjective_questions = load_question_cache(
+        selected_subject_id=selected_subject_id,
+        class_id=class_id_int,
+        school_id=school_id_int
+    )
+
+    # ---------------------------------------------------------
+    # 🧩 TEST TYPE SELECTION
+    # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # 🧩 TEST TYPE SELECTION
+    # ---------------------------------------------------------
+
+    selected_test_type = render_test_type_selector(
+        class_id=class_id,
+        subject_id=selected_subject_id
+    )
+
+    # ---------------------------------------------------------
+    # KEEP EXISTING TEST TYPE DURING ACTIVE TEST
+    # ---------------------------------------------------------
+
+    if (
+            "test_started" in st.session_state
+            and st.session_state.test_started
+            and "test_type" in st.session_state
+    ):
+        test_type = st.session_state.test_type
+
+    else:
+        test_type = selected_test_type
+        st.session_state.test_type = test_type
+
+
     # =========================================================
     # 🔄 TEST TYPE SWITCH RESET
     # =========================================================
@@ -1119,7 +1333,7 @@ def run_student_mode():
                     else st.session_state.start_time
                 )
 
-                subject_id = selected_subject_id
+                subject_id = selected_subject["id"]
                 test_type = st.session_state.test_type
 
 
@@ -1582,7 +1796,7 @@ def run_student_mode():
                             "Unknown Class"
                         ),
 
-                        subject=selected_subject_name,
+                        subject=selected_subject["name"],
 
                         correct=pdf_correct,
 
@@ -1613,7 +1827,7 @@ def run_student_mode():
 
                         file_name=(
                             f"{student.get('name', 'student')}_"
-                            f"{selected_subject_name}_"
+                            f"{selected_subject['name']}_"
                             f"{pdf_test_type}_result.pdf"
                         ),
 

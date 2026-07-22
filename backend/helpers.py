@@ -141,7 +141,7 @@ def save_student_answers(access_code, subject, questions, answers):
         # ---------------------------------------------
         student = db.query(Student).filter(Student.access_code == access_code).first()
         if not student:
-            print("❌ Student not found for access code:", access_code)
+
             return
 
         student_id = student.id
@@ -925,8 +925,6 @@ def render_student_login():
         "subject": None
 
     })
-    st.write("LOGIN SAVED ACCESS CODE:")
-    st.write(st.session_state.get("access_code"))
 
 
     reset_keys = [
@@ -946,15 +944,7 @@ def render_student_login():
     for k in reset_keys:
         st.session_state.pop(k, None)
 
-    st.write("LOGIN SAVING ACCESS CODE:")
-    st.write(student.get("access_code"))
-
-    st.write("SESSION AFTER LOGIN:")
-    st.write(dict(st.session_state))
-
     st.rerun()
-
-
 
 
 
@@ -1035,7 +1025,7 @@ def handle_test_actions(
 
         st.session_state["test_action"] = "start"
         st.session_state["test_started"] = True
-        st.rerun()
+
 
     if resume_clicked:
         st.session_state["test_action"] = "resume"
@@ -1047,43 +1037,6 @@ def handle_test_actions(
 # =========================================
 #
 # =========================================
-def get_saved_progress(
-        access_code,
-        subject_id,
-        class_id,
-        school_id,
-        test_type,
-        student_id
-):
-    progress = load_progress(
-        access_code=access_code,
-        subject_id=subject_id,
-        class_id=class_id,
-        school_id=school_id,
-        test_type=test_type,
-        student_id=student_id
-    )
-
-    if not progress:
-        st.warning("⚠️ No unfinished test to resume.")
-        st.session_state.test_started = False
-        st.session_state.test_action = None
-        st.stop()
-
-    if progress.get("submitted", False):
-        st.warning("⚠️ This test was already submitted.")
-        st.session_state.test_started = False
-        st.session_state.test_action = None
-        st.stop()
-
-    if not progress.get("start_time") or not progress.get("duration"):
-        st.warning("⚠️ No valid test session to resume.")
-        st.session_state.test_started = False
-        st.session_state.test_action = None
-        st.stop()
-
-    return progress
-
 
 
 
@@ -1159,17 +1112,11 @@ def restore_test_session(
         saved_answers = {}
 
     st.session_state.answers = saved_answers
-    st.write("RESTORE SAVED ANSWERS:")
-    st.write(saved_answers)
-
-    st.write("SESSION ANSWERS AFTER RESTORE:")
-    st.write(st.session_state.answers)
 
     st.session_state.current_q = min(
         max(saved_progress.get("current_q", 0), 0),
         len(st.session_state.questions) - 1
     )
-
     st.session_state.start_time = datetime.fromtimestamp(
         saved_progress["start_time"]
     )
@@ -1254,10 +1201,8 @@ def get_or_create_student_progress(
             "class_id": record.class_id,
             "school_id": record.school_id,
             "test_type": record.test_type,
-            "start_time": record.start_time,
-            "duration": record.duration,
             "submitted": record.submitted,
-            "locked": record.locked
+            "locked": record.locked,
         }
 
     finally:
@@ -1310,6 +1255,21 @@ def render_test_type_selector(
     class_id,
     subject_id
 ):
+
+    if "test_type" not in st.session_state:
+        st.session_state.test_type = "objective"
+
+
+    # 🔒 LOCK DURING ACTIVE TEST
+    if st.session_state.get("test_started", False):
+
+        st.info(
+            f"📝 Active test type: {st.session_state.test_type.title()}"
+        )
+
+        return st.session_state.test_type
+
+
     st.markdown(
         """
         <div style='font-size:20px; font-weight:bold;
@@ -1321,16 +1281,19 @@ def render_test_type_selector(
         unsafe_allow_html=True
     )
 
-    if "test_type" not in st.session_state:
-        st.session_state.test_type = "objective"
 
-    test_options = ["Objective", "Subjective"]
+    test_options = [
+        "Objective",
+        "Subjective"
+    ]
+
 
     default_index = (
         0
         if st.session_state.test_type == "objective"
         else 1
     )
+
 
     test_choice = st.radio(
         "Choose type",
@@ -1340,13 +1303,11 @@ def render_test_type_selector(
         key=f"test_type_radio_{class_id}_{subject_id}"
     )
 
-    selected_type = test_choice.lower()
 
-    if selected_type != st.session_state.test_type:
-        st.session_state.test_type = selected_type
+    st.session_state.test_type = test_choice.lower()
+
 
     return st.session_state.test_type
-
 
 
 
@@ -1402,6 +1363,7 @@ def render_test_entry_controls(
     is_locked,
     retake_allowed
 ):
+
     saved_progress = load_progress(
         access_code=access_code,
         subject_id=subject_id,
@@ -1467,14 +1429,8 @@ def persist_progress():
         if value is None or value == ""
     ]
 
-    print("subject_id value =", repr(subject_id))
-    print("student_id value =", repr(student_id))
-    print("class_id value =", repr(class_id))
-    print("school_id value =", repr(school_id))
-    print("persist_progress missing:", missing)
 
     if missing:
-        print("persist_progress EXITING")
         return
 
     # -------------------------
@@ -1503,13 +1459,8 @@ def persist_progress():
     )
 
     if st.session_state.get("_last_saved_state") == state:
-        print("persist_progress SKIPPED")
-        return
 
-    print("========== PERSIST ==========")
-    print("access_code:", access_code)
-    print("student_id:", student_id)
-    print("current_q:", current_q)
+        return
 
     try:
         save_progress(
@@ -1529,10 +1480,10 @@ def persist_progress():
 
         # only mark saved AFTER successful save
         st.session_state["_last_saved_state"] = state
-        print("persist_progress DONE")
+
 
     except Exception as e:
-        print(f"persist_progress ERROR: {e}")
+
         raise
 
 
