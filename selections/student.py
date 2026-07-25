@@ -419,7 +419,6 @@ def run_student_mode():
         st.session_state.last_test_type = test_type
         st.rerun()
 
-
     # -------------------------
     # 👤 VALIDATE STUDENT
     # -------------------------
@@ -432,17 +431,16 @@ def run_student_mode():
 
     student_id = student_info["id"]
 
-    print("CURRENT TEST TYPE:", st.session_state.test_type)
-    print(">>> LOADING STUDENT PROGRESS")
+    print("🔵 Loading StudentProgress from DB")
+
     record = get_or_create_student_progress(
         student_id=student_id,
         access_code=access_code,
         subject_id=selected_subject_id,
         class_id=class_id_int,
         school_id=school_id_int,
-        test_type=st.session_state.test_type
+        test_type=st.session_state.test_type,
     )
-
 
     print("DATABASE RECORD")
     print(record)
@@ -450,11 +448,9 @@ def run_student_mode():
     print("SUBMITTED:", record.get("submitted"))
 
     print(">>> STUDENT PROGRESS LOADED")
+
     is_locked = record.get("locked", False)
     is_submitted = record.get("submitted", False)
-
-
-
     # -------------------------
     # 🔁 RETAKE LOGIC
     # -------------------------
@@ -507,8 +503,6 @@ def run_student_mode():
             school_id=school_id_int
         )
 
-
-
 # -----------------------------------
 # start test
 # -----------------------------------
@@ -528,10 +522,7 @@ def run_student_mode():
 
             question_bank = list(question_bank)
             random.shuffle(question_bank)
-
-
-
-            # -------------------------
+           # -------------------------
             # Normalize questions
             # -------------------------
             normalized_questions = [
@@ -539,12 +530,9 @@ def run_student_mode():
                 for q in question_bank
             ]
 
-
-
             # ✅ SAVE RANDOMIZED ORDER
             st.session_state.questions = normalized_questions
             st.session_state.test_started = True
-
 
             # -------------------------
             # Reset state
@@ -572,6 +560,7 @@ def run_student_mode():
             st.session_state.submitted = False
 
             st.session_state.locked = False
+
 
             # -------------------------
             # Save progress (UPDATED FIXED VERSION)
@@ -622,6 +611,14 @@ def run_student_mode():
 
             t0 = time.time()
 
+            print("\n==============================")
+            print("SAVE_PROGRESS CALLED")
+            print("==============================")
+            print("submitted=False")
+            print("student_id :", student_id)
+            print("subject_id :", selected_subject_id)
+            print("current_q  :", st.session_state.current_q)
+            print("==============================")
             saved_progress = load_progress(
                 access_code=access_code,
                 subject_id=selected_subject_id,
@@ -1493,8 +1490,6 @@ def run_student_mode():
                 # =====================================================
                 elif test_type == "objective":
 
-
-
                     db = get_session()
 
                     try:
@@ -1569,38 +1564,67 @@ def run_student_mode():
                         # -------------------------
                         # Progress
                         # -------------------------
-                        progress = db.query(
-                            StudentProgress
-                        ).filter_by(
-                            student_id=student_id,
-                            subject_id=subject_id,
-                            class_id=class_id,
-                            school_id=school_id_int,
-                            test_type="objective"
-                        ).order_by(
-                            StudentProgress.created_at.desc()
-                        ).first()
+                        # -------------------------
+                        # Progress
+                        # -------------------------
+                        progress = (
+                            db.query(StudentProgress)
+                            .filter_by(
+                                student_id=student_id,
+                                subject_id=subject_id,
+                                class_id=class_id,
+                                school_id=school_id_int,
+                                test_type="objective",
+                            )
+                            .order_by(StudentProgress.created_at.desc())
+                            .first()
+                        )
 
-                        if progress:
+                        print("\n==============================")
+                        print("LOOKING FOR STUDENT PROGRESS")
+                        print("==============================")
+                        print("student_id :", student_id)
+                        print("subject_id :", subject_id)
+                        print("class_id   :", class_id)
+                        print("school_id  :", school_id_int)
+
+                        if progress is None:
+                            print("❌ NO StudentProgress FOUND!")
+
+                        else:
+
+                            print("✅ Progress Found")
+                            print("ID          :", progress.id)
+                            print("submitted   :", progress.submitted)
+                            print("locked      :", progress.locked)
+                            print("review      :", progress.review_status)
+
+                            # Update progress fields
                             progress.current_q = st.session_state.current_q
-
                             progress.start_time = start_time_ts
-
                             progress.duration = st.session_state.duration
+                            progress.questions = [q["id"] for q in st.session_state.questions]
 
-                            progress.questions = [
-                                q["id"]
-                                for q in st.session_state.questions
-                            ]
+                            print("\n🔥 CALLING FINALIZE_SUBMISSION")
 
                             finalize_submission(
                                 db=db,
                                 progress=progress,
                                 answers=details,
                                 score=correct_count,
-                                test_type="objective"
+                                test_type="objective",
                             )
 
+                            # Force refresh from DB
+                            db.refresh(progress)
+
+                            print("\n==============================")
+                            print("AFTER FINALIZE")
+                            print("==============================")
+                            print("submitted   :", progress.submitted)
+                            print("locked      :", progress.locked)
+                            print("review      :", progress.review_status)
+                            print("submitted_at:", progress.submitted_at)
 
                         # -------------------------
                         # Save Student Answers

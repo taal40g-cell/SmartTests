@@ -1494,58 +1494,69 @@ def persist_progress():
 from datetime import datetime, timezone
 import json
 def finalize_submission(
-        db,
-        progress,
-        answers=None,
-        score=None,
-        test_type="objective"
+    db,
+    progress,
+    answers=None,
+    score=None,
+    test_type="objective",
 ):
-    """
-    Finalize student test submission.
-    Handles objective and subjective workflows.
-    """
 
     now = datetime.now(timezone.utc)
 
-    # -------------------------
+    print("\n==============================")
+    print("FINALIZE_SUBMISSION")
+    print("==============================")
+    print("Progress ID :", progress.id)
+    print("Before")
+    print("submitted :", progress.submitted)
+    print("locked    :", progress.locked)
+
     # Save answers
-    # -------------------------
     if answers is not None:
         progress.answers = answers
 
-    # -------------------------
-    # Submission status
-    # -------------------------
+    progress.score = score
+
+    # Mark submitted
     progress.submitted = True
     progress.submitted_at = now
 
-    # -------------------------
-    # Scoring
-    # -------------------------
-    progress.score = score
-
-    # -------------------------
-    # Review workflow
-    # -------------------------
     if test_type == "subjective":
 
-        # waiting for teacher
         progress.review_status = "pending"
         progress.reviewed_at = None
         progress.locked = False
 
     else:
 
-        # automatic marking
         progress.review_status = "completed"
         progress.reviewed_at = now
         progress.locked = True
 
+    print("\nAfter Assignment")
+    print("submitted :", progress.submitted)
+    print("locked    :", progress.locked)
+
     db.add(progress)
+    db.flush()
+
+    print("\nAfter Flush")
+    print("submitted :", progress.submitted)
+    print("locked    :", progress.locked)
+
     db.commit()
 
-    return progress
+    print("\nAfter Commit")
+    print("submitted :", progress.submitted)
+    print("locked    :", progress.locked)
 
+    db.refresh(progress)
+
+    print("\nAfter Refresh")
+    print("submitted :", progress.submitted)
+    print("locked    :", progress.locked)
+
+    return progress
 
 
 def render_pre_test_screen(
