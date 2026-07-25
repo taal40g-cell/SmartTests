@@ -802,8 +802,6 @@ def run_student_mode():
             st.session_state.paste_count = 0
 
 
-
-
         # =============================
         # ⏱️ TIMER (BEFORE RENDER)
         # =============================
@@ -1544,12 +1542,6 @@ def run_student_mode():
                                 "is_correct": is_correct
                             })
 
-
-                        # 👇 PUT DEBUG HERE
-
-
-                        for item in details[:3]:
-                            st.write(item)
 
                         # 👇 EXISTING CODE CONTINUES
                         total_questions = len(details)
